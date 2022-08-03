@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2022 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -149,8 +149,8 @@ static int test_md(const EVP_MD *md)
     return TEST_ptr(md)
         && TEST_true(EVP_MD_is_a(md, "SHA256"))
         && TEST_true(calculate_digest(md, testmsg, sizeof(testmsg), exptd))
-        && TEST_int_eq(EVP_MD_size(md), SHA256_DIGEST_LENGTH)
-        && TEST_int_eq(EVP_MD_block_size(md), SHA256_CBLOCK);
+        && TEST_int_eq(EVP_MD_get_size(md), SHA256_DIGEST_LENGTH)
+        && TEST_int_eq(EVP_MD_get_block_size(md), SHA256_CBLOCK);
 }
 
 static int test_implicit_EVP_MD_fetch(void)
@@ -212,7 +212,7 @@ static int test_explicit_EVP_MD_fetch_by_X509_ALGOR(int idx)
     int ret = 0;
     X509_ALGOR *algor = make_algor(NID_sha256);
     const ASN1_OBJECT *obj;
-    char id[OSSL_MAX_NAME_SIZE];
+    char id[OSSL_MAX_NAME_SIZE] = { 0 };
 
     if (algor == NULL)
         return 0;
@@ -220,11 +220,11 @@ static int test_explicit_EVP_MD_fetch_by_X509_ALGOR(int idx)
     X509_ALGOR_get0(&obj, NULL, NULL, algor);
     switch (idx) {
     case 0:
-        if (!TEST_true(OBJ_obj2txt(id, sizeof(id), obj, 0)))
+        if (!TEST_int_gt(OBJ_obj2txt(id, sizeof(id), obj, 0), 0))
             goto end;
         break;
     case 1:
-        if (!TEST_true(OBJ_obj2txt(id, sizeof(id), obj, 1)))
+        if (!TEST_int_gt(OBJ_obj2txt(id, sizeof(id), obj, 1), 0))
             goto end;
         break;
     }
@@ -328,7 +328,7 @@ static int test_explicit_EVP_CIPHER_fetch_by_X509_ALGOR(int idx)
     int ret = 0;
     X509_ALGOR *algor = make_algor(NID_aes_128_cbc);
     const ASN1_OBJECT *obj;
-    char id[OSSL_MAX_NAME_SIZE];
+    char id[OSSL_MAX_NAME_SIZE] = { 0 };
 
     if (algor == NULL)
         return 0;
@@ -336,11 +336,11 @@ static int test_explicit_EVP_CIPHER_fetch_by_X509_ALGOR(int idx)
     X509_ALGOR_get0(&obj, NULL, NULL, algor);
     switch (idx) {
     case 0:
-        if (!TEST_true(OBJ_obj2txt(id, sizeof(id), obj, 0)))
+        if (!TEST_int_gt(OBJ_obj2txt(id, sizeof(id), obj, 0), 0))
             goto end;
         break;
     case 1:
-        if (!TEST_true(OBJ_obj2txt(id, sizeof(id), obj, 1)))
+        if (!TEST_int_gt(OBJ_obj2txt(id, sizeof(id), obj, 1), 0))
             goto end;
         break;
     }

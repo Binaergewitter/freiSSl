@@ -1,5 +1,5 @@
 /*
- * Copyright 2006-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2006-2022 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -12,6 +12,7 @@
 #include <openssl/err.h>
 #include <openssl/decoder.h>
 #include "internal/sizes.h"
+#include "crypto/asn1.h"
 #include "crypto/evp.h"
 #include "cms_local.h"
 
@@ -20,12 +21,12 @@ static EVP_PKEY *pkey_type2param(int ptype, const void *pval,
 {
     EVP_PKEY *pkey = NULL;
     EVP_PKEY_CTX *pctx = NULL;
+    OSSL_DECODER_CTX *ctx = NULL;
 
     if (ptype == V_ASN1_SEQUENCE) {
         const ASN1_STRING *pstr = pval;
         const unsigned char *pm = pstr->data;
         size_t pmlen = (size_t)pstr->length;
-        OSSL_DECODER_CTX *ctx = NULL;
         int selection = OSSL_KEYMGMT_SELECT_ALL_PARAMETERS;
 
         ctx = OSSL_DECODER_CTX_new_for_pkey(&pkey, "DER", NULL, "EC",
@@ -33,8 +34,12 @@ static EVP_PKEY *pkey_type2param(int ptype, const void *pval,
         if (ctx == NULL)
             goto err;
 
-        OSSL_DECODER_from_data(ctx, &pm, &pmlen);
+        if (!OSSL_DECODER_from_data(ctx, &pm, &pmlen)) {
+            ERR_raise(ERR_LIB_CMS, CMS_R_DECODE_ERROR);
+            goto err;
+        }
         OSSL_DECODER_CTX_free(ctx);
+        return pkey;
     } else if (ptype == V_ASN1_OBJECT) {
         const ASN1_OBJECT *poid = pval;
         char groupname[OSSL_MAX_NAME_SIZE];
@@ -43,23 +48,24 @@ static EVP_PKEY *pkey_type2param(int ptype, const void *pval,
         pctx = EVP_PKEY_CTX_new_from_name(libctx, "EC", propq);
         if (pctx == NULL || EVP_PKEY_paramgen_init(pctx) <= 0)
             goto err;
-        if (!OBJ_obj2txt(groupname, sizeof(groupname), poid, 0)
-                || !EVP_PKEY_CTX_set_group_name(pctx, groupname)) {
+        if (OBJ_obj2txt(groupname, sizeof(groupname), poid, 0) <= 0
+                || EVP_PKEY_CTX_set_group_name(pctx, groupname) <= 0) {
             ERR_raise(ERR_LIB_CMS, CMS_R_DECODE_ERROR);
             goto err;
         }
         if (EVP_PKEY_paramgen(pctx, &pkey) <= 0)
             goto err;
-    } else {
-        ERR_raise(ERR_LIB_CMS, CMS_R_DECODE_ERROR);
-        goto err;
+        EVP_PKEY_CTX_free(pctx);
+        return pkey;
     }
 
-    return pkey;
+    ERR_raise(ERR_LIB_CMS, CMS_R_DECODE_ERROR);
+    return NULL;
 
  err:
     EVP_PKEY_free(pkey);
     EVP_PKEY_CTX_free(pctx);
+    OSSL_DECODER_CTX_free(ctx);
     return NULL;
 }
 
@@ -182,14 +188,14 @@ static int ecdh_cms_set_shared_info(EVP_PKEY_CTX *pctx, CMS_RecipientInfo *ri)
         goto err;
     OBJ_obj2txt(name, sizeof(name), kekalg->algorithm, 0);
     kekcipher = EVP_CIPHER_fetch(pctx->libctx, name, pctx->propquery);
-    if (kekcipher == NULL || EVP_CIPHER_mode(kekcipher) != EVP_CIPH_WRAP_MODE)
+    if (kekcipher == NULL || EVP_CIPHER_get_mode(kekcipher) != EVP_CIPH_WRAP_MODE)
         goto err;
     if (!EVP_EncryptInit_ex(kekctx, kekcipher, NULL, NULL, NULL))
         goto err;
     if (EVP_CIPHER_asn1_to_param(kekctx, kekalg->parameter) <= 0)
         goto err;
 
-    keylen = EVP_CIPHER_CTX_key_length(kekctx);
+    keylen = EVP_CIPHER_CTX_get_key_length(kekctx);
     if (EVP_PKEY_CTX_set_ecdh_kdf_outlen(pctx, keylen) <= 0)
         goto err;
 
@@ -272,19 +278,18 @@ static int ecdh_cms_encrypt(CMS_RecipientInfo *ri)
 
         penclen = EVP_PKEY_get1_encoded_public_key(pkey, &penc);
         ASN1_STRING_set0(pubkey, penc, penclen);
-        pubkey->flags &= ~(ASN1_STRING_FLAG_BITS_LEFT | 0x07);
-        pubkey->flags |= ASN1_STRING_FLAG_BITS_LEFT;
+        ossl_asn1_string_set_bits_left(pubkey, 0);
 
         penc = NULL;
-        X509_ALGOR_set0(talg, OBJ_nid2obj(NID_X9_62_id_ecPublicKey),
-                        V_ASN1_UNDEF, NULL);
+        (void)X509_ALGOR_set0(talg, OBJ_nid2obj(NID_X9_62_id_ecPublicKey),
+                              V_ASN1_UNDEF, NULL); /* cannot fail */
     }
 
     /* See if custom parameters set */
     kdf_type = EVP_PKEY_CTX_get_ecdh_kdf_type(pctx);
     if (kdf_type <= 0)
         goto err;
-    if (!EVP_PKEY_CTX_get_ecdh_kdf_md(pctx, &kdf_md))
+    if (EVP_PKEY_CTX_get_ecdh_kdf_md(pctx, &kdf_md) <= 0)
         goto err;
     ecdh_nid = EVP_PKEY_CTX_get_ecdh_cofactor_mode(pctx);
     if (ecdh_nid < 0)
@@ -313,12 +318,12 @@ static int ecdh_cms_encrypt(CMS_RecipientInfo *ri)
 
     /* Lookup NID for KDF+cofactor+digest */
 
-    if (!OBJ_find_sigid_by_algs(&kdf_nid, EVP_MD_type(kdf_md), ecdh_nid))
+    if (!OBJ_find_sigid_by_algs(&kdf_nid, EVP_MD_get_type(kdf_md), ecdh_nid))
         goto err;
     /* Get wrap NID */
     ctx = CMS_RecipientInfo_kari_get0_ctx(ri);
-    wrap_nid = EVP_CIPHER_CTX_type(ctx);
-    keylen = EVP_CIPHER_CTX_key_length(ctx);
+    wrap_nid = EVP_CIPHER_CTX_get_type(ctx);
+    keylen = EVP_CIPHER_CTX_get_key_length(ctx);
 
     /* Package wrap algorithm in an AlgorithmIdentifier */
 
@@ -360,9 +365,9 @@ static int ecdh_cms_encrypt(CMS_RecipientInfo *ri)
         goto err;
     ASN1_STRING_set0(wrap_str, penc, penclen);
     penc = NULL;
-    X509_ALGOR_set0(talg, OBJ_nid2obj(kdf_nid), V_ASN1_SEQUENCE, wrap_str);
-
-    rv = 1;
+    rv = X509_ALGOR_set0(talg, OBJ_nid2obj(kdf_nid), V_ASN1_SEQUENCE, wrap_str);
+    if (!rv)
+        ASN1_STRING_free(wrap_str);
 
  err:
     OPENSSL_free(penc);
@@ -382,27 +387,4 @@ int ossl_cms_ecdh_envelope(CMS_RecipientInfo *ri, int decrypt)
 
     ERR_raise(ERR_LIB_CMS, CMS_R_NOT_SUPPORTED_FOR_THIS_KEY_TYPE);
     return 0;
-}
-
-/* ECDSA and DSA implementation is the same */
-int ossl_cms_ecdsa_dsa_sign(CMS_SignerInfo *si, int verify)
-{
-    assert(verify == 0 || verify == 1);
-
-    if (verify == 0) {
-        int snid, hnid;
-        X509_ALGOR *alg1, *alg2;
-        EVP_PKEY *pkey = si->pkey;
-
-        CMS_SignerInfo_get0_algs(si, NULL, NULL, &alg1, &alg2);
-        if (alg1 == NULL || alg1->algorithm == NULL)
-            return -1;
-        hnid = OBJ_obj2nid(alg1->algorithm);
-        if (hnid == NID_undef)
-            return -1;
-        if (!OBJ_find_sigid_by_algs(&snid, hnid, EVP_PKEY_id(pkey)))
-            return -1;
-        X509_ALGOR_set0(alg2, OBJ_nid2obj(snid), V_ASN1_UNDEF, 0);
-    }
-    return 1;
 }

@@ -346,7 +346,7 @@ int ssl_load_ciphers(SSL_CTX *ctx)
         if (md == NULL) {
             ctx->disabled_mac_mask |= t->mask;
         } else {
-            int tmpsize = EVP_MD_size(md);
+            int tmpsize = EVP_MD_get_size(md);
             if (!ossl_assert(tmpsize >= 0))
                 return 0;
             ctx->ssl_mac_secret_size[i] = tmpsize;
@@ -555,19 +555,23 @@ int ssl_cipher_get_evp(SSL_CTX *ctx, const SSL_SESSION *s,
         if (c->algorithm_mac == SSL_AEAD)
             mac_pkey_type = NULL;
     } else {
-        if (!ssl_evp_md_up_ref(ctx->ssl_digest_methods[i])) {
+        const EVP_MD *digest = ctx->ssl_digest_methods[i];
+
+        if (digest == NULL
+                || !ssl_evp_md_up_ref(digest)) {
             ssl_evp_cipher_free(*enc);
             return 0;
         }
-        *md = ctx->ssl_digest_methods[i];
+        *md = digest;
         if (mac_pkey_type != NULL)
             *mac_pkey_type = ctx->ssl_mac_pkey_id[i];
         if (mac_secret_size != NULL)
             *mac_secret_size = ctx->ssl_mac_secret_size[i];
     }
 
-    if ((*enc != NULL) &&
-        (*md != NULL || (EVP_CIPHER_flags(*enc) & EVP_CIPH_FLAG_AEAD_CIPHER))
+    if ((*enc != NULL)
+        && (*md != NULL 
+            || (EVP_CIPHER_get_flags(*enc) & EVP_CIPH_FLAG_AEAD_CIPHER))
         && (!mac_pkey_type || *mac_pkey_type != NID_undef)) {
         const EVP_CIPHER *evp = NULL;
 
@@ -621,14 +625,15 @@ const EVP_MD *ssl_md(SSL_CTX *ctx, int idx)
     return ctx->ssl_digest_methods[idx];
 }
 
-const EVP_MD *ssl_handshake_md(SSL *s)
+const EVP_MD *ssl_handshake_md(SSL_CONNECTION *s)
 {
-    return ssl_md(s->ctx, ssl_get_algorithm2(s));
+    return ssl_md(SSL_CONNECTION_GET_CTX(s), ssl_get_algorithm2(s));
 }
 
-const EVP_MD *ssl_prf_md(SSL *s)
+const EVP_MD *ssl_prf_md(SSL_CONNECTION *s)
 {
-    return ssl_md(s->ctx, ssl_get_algorithm2(s) >> TLS1_PRF_DGST_SHIFT);
+    return ssl_md(SSL_CONNECTION_GET_CTX(s),
+                  ssl_get_algorithm2(s) >> TLS1_PRF_DGST_SHIFT);
 }
 
 #define ITEM_SEP(a) \
@@ -811,7 +816,7 @@ static void ssl_cipher_apply_rule(uint32_t cipher_id, uint32_t alg_mkey,
     const SSL_CIPHER *cp;
     int reverse = 0;
 
-    OSSL_TRACE_BEGIN(TLS_CIPHER){
+    OSSL_TRACE_BEGIN(TLS_CIPHER) {
         BIO_printf(trc_out,
                    "Applying rule %d with %08x/%08x/%08x/%08x/%08x %08x (%d)\n",
                    rule, alg_mkey, alg_auth, alg_enc, alg_mac, min_tls,
@@ -1000,7 +1005,7 @@ static int ssl_cipher_process_rulestr(const char *rule_str,
 
     retval = 1;
     l = rule_str;
-    for ( ; ; ) {
+    for (;;) {
         ch = *l;
 
         if (ch == '\0')
@@ -1041,9 +1046,9 @@ static int ssl_cipher_process_rulestr(const char *rule_str,
             while (((ch >= 'A') && (ch <= 'Z')) ||
                    ((ch >= '0') && (ch <= '9')) ||
                    ((ch >= 'a') && (ch <= 'z')) ||
-                   (ch == '-') || (ch == '.') || (ch == '='))
+                   (ch == '-') || (ch == '_') || (ch == '.') || (ch == '='))
 #else
-            while (isalnum((unsigned char)ch) || (ch == '-') || (ch == '.')
+            while (isalnum((unsigned char)ch) || (ch == '-') || (ch == '_') || (ch == '.')
                    || (ch == '='))
 #endif
             {
@@ -1092,6 +1097,11 @@ static int ssl_cipher_process_rulestr(const char *rule_str,
             while (ca_list[j]) {
                 if (strncmp(buf, ca_list[j]->name, buflen) == 0
                     && (ca_list[j]->name[buflen] == '\0')) {
+                    found = 1;
+                    break;
+                } else if (ca_list[j]->stdname != NULL
+                           && strncmp(buf, ca_list[j]->stdname, buflen) == 0
+                           && ca_list[j]->stdname[buflen] == '\0') {
                     found = 1;
                     break;
                 } else
@@ -1210,10 +1220,10 @@ static int ssl_cipher_process_rulestr(const char *rule_str,
          */
         if (rule == CIPHER_SPECIAL) { /* special command */
             ok = 0;
-            if ((buflen == 8) && strncmp(buf, "STRENGTH", 8) == 0) {
+            if ((buflen == 8) && HAS_PREFIX(buf, "STRENGTH")) {
                 ok = ssl_cipher_strength_sort(head_p, tail_p);
-            } else if (buflen == 10 && strncmp(buf, "SECLEVEL=", 9) == 0) {
-                int level = buf[9] - '0';
+            } else if (buflen == 10 && CHECK_AND_SKIP_PREFIX(buf, "SECLEVEL=")) {
+                int level = *buf - '0';
                 if (level < 0 || level > 5) {
                     ERR_raise(ERR_LIB_SSL, SSL_R_INVALID_COMMAND);
                 } else {
@@ -1253,14 +1263,14 @@ static int check_suiteb_cipher_list(const SSL_METHOD *meth, CERT *c,
                                     const char **prule_str)
 {
     unsigned int suiteb_flags = 0, suiteb_comb2 = 0;
-    if (strncmp(*prule_str, "SUITEB128ONLY", 13) == 0) {
+    if (HAS_PREFIX(*prule_str, "SUITEB128ONLY")) {
         suiteb_flags = SSL_CERT_FLAG_SUITEB_128_LOS_ONLY;
-    } else if (strncmp(*prule_str, "SUITEB128C2", 11) == 0) {
+    } else if (HAS_PREFIX(*prule_str, "SUITEB128C2")) {
         suiteb_comb2 = 1;
         suiteb_flags = SSL_CERT_FLAG_SUITEB_128_LOS;
-    } else if (strncmp(*prule_str, "SUITEB128", 9) == 0) {
+    } else if (HAS_PREFIX(*prule_str, "SUITEB128")) {
         suiteb_flags = SSL_CERT_FLAG_SUITEB_128_LOS;
-    } else if (strncmp(*prule_str, "SUITEB192", 9) == 0) {
+    } else if (HAS_PREFIX(*prule_str, "SUITEB192")) {
         suiteb_flags = SSL_CERT_FLAG_SUITEB_192_LOS;
     }
 
@@ -1364,7 +1374,8 @@ static int update_cipher_list_by_id(STACK_OF(SSL_CIPHER) **cipher_list_by_id,
     return 1;
 }
 
-static int update_cipher_list(STACK_OF(SSL_CIPHER) **cipher_list,
+static int update_cipher_list(SSL_CTX *ctx,
+                              STACK_OF(SSL_CIPHER) **cipher_list,
                               STACK_OF(SSL_CIPHER) **cipher_list_by_id,
                               STACK_OF(SSL_CIPHER) *tls13_ciphersuites)
 {
@@ -1384,9 +1395,17 @@ static int update_cipher_list(STACK_OF(SSL_CIPHER) **cipher_list,
         (void)sk_SSL_CIPHER_delete(tmp_cipher_list, 0);
 
     /* Insert the new TLSv1.3 ciphersuites */
-    for (i = 0; i < sk_SSL_CIPHER_num(tls13_ciphersuites); i++)
-        sk_SSL_CIPHER_insert(tmp_cipher_list,
-                             sk_SSL_CIPHER_value(tls13_ciphersuites, i), i);
+    for (i = sk_SSL_CIPHER_num(tls13_ciphersuites) - 1; i >= 0; i--) {
+        const SSL_CIPHER *sslc = sk_SSL_CIPHER_value(tls13_ciphersuites, i);
+
+        /* Don't include any TLSv1.3 ciphersuites that are disabled */
+        if ((sslc->algorithm_enc & ctx->disabled_enc_mask) == 0
+                && (ssl_cipher_table_mac[sslc->algorithm2
+                                         & SSL_HANDSHAKE_MAC_MASK].mask
+                    & ctx->disabled_mac_mask) == 0) {
+            sk_SSL_CIPHER_unshift(tmp_cipher_list, sslc);
+        }
+    }
 
     if (!update_cipher_list_by_id(cipher_list_by_id, tmp_cipher_list)) {
         sk_SSL_CIPHER_free(tmp_cipher_list);
@@ -1404,7 +1423,7 @@ int SSL_CTX_set_ciphersuites(SSL_CTX *ctx, const char *str)
     int ret = set_ciphersuites(&(ctx->tls13_ciphersuites), str);
 
     if (ret && ctx->cipher_list != NULL)
-        return update_cipher_list(&ctx->cipher_list, &ctx->cipher_list_by_id,
+        return update_cipher_list(ctx, &ctx->cipher_list, &ctx->cipher_list_by_id,
                                   ctx->tls13_ciphersuites);
 
     return ret;
@@ -1413,15 +1432,22 @@ int SSL_CTX_set_ciphersuites(SSL_CTX *ctx, const char *str)
 int SSL_set_ciphersuites(SSL *s, const char *str)
 {
     STACK_OF(SSL_CIPHER) *cipher_list;
-    int ret = set_ciphersuites(&(s->tls13_ciphersuites), str);
+    SSL_CONNECTION *sc = SSL_CONNECTION_FROM_SSL(s);
+    int ret;
 
-    if (s->cipher_list == NULL) {
+    if (sc == NULL)
+        return 0;
+
+    ret = set_ciphersuites(&(sc->tls13_ciphersuites), str);
+
+    if (sc->cipher_list == NULL) {
         if ((cipher_list = SSL_get_ciphers(s)) != NULL)
-            s->cipher_list = sk_SSL_CIPHER_dup(cipher_list);
+            sc->cipher_list = sk_SSL_CIPHER_dup(cipher_list);
     }
-    if (ret && s->cipher_list != NULL)
-        return update_cipher_list(&s->cipher_list, &s->cipher_list_by_id,
-                                  s->tls13_ciphersuites);
+    if (ret && sc->cipher_list != NULL)
+        return update_cipher_list(s->ctx, &sc->cipher_list,
+                                  &sc->cipher_list_by_id,
+                                  sc->tls13_ciphersuites);
 
     return ret;
 }
@@ -1542,7 +1568,6 @@ STACK_OF(SSL_CIPHER) *ssl_create_cipher_list(SSL_CTX *ctx,
 
     /*
      * Partially overrule strength sort to prefer TLS 1.2 ciphers/PRFs.
-     * TODO(openssl-team): is there an easier way to accomplish all this?
      */
     ssl_cipher_apply_rule(0, 0, 0, 0, 0, TLS1_2_VERSION, 0, CIPHER_BUMP, -1,
                           &head, &tail);
@@ -1596,7 +1621,7 @@ STACK_OF(SSL_CIPHER) *ssl_create_cipher_list(SSL_CTX *ctx,
      */
     ok = 1;
     rule_p = rule_str;
-    if (strncmp(rule_str, "DEFAULT", 7) == 0) {
+    if (HAS_PREFIX(rule_str, "DEFAULT")) {
         ok = ssl_cipher_process_rulestr(OSSL_default_cipher_list(),
                                         &head, &tail, ca_list, c);
         rule_p += 7;
@@ -1638,6 +1663,7 @@ STACK_OF(SSL_CIPHER) *ssl_create_cipher_list(SSL_CTX *ctx,
         }
 
         if (!sk_SSL_CIPHER_push(cipherstack, sslc)) {
+            OPENSSL_free(co_list);
             sk_SSL_CIPHER_free(cipherstack);
             return NULL;
         }
@@ -2078,10 +2104,11 @@ int SSL_COMP_get_id(const SSL_COMP *comp)
 #endif
 }
 
-const SSL_CIPHER *ssl_get_cipher_by_char(SSL *ssl, const unsigned char *ptr,
+const SSL_CIPHER *ssl_get_cipher_by_char(SSL_CONNECTION *s,
+                                         const unsigned char *ptr,
                                          int all)
 {
-    const SSL_CIPHER *c = ssl->method->get_cipher_by_char(ptr);
+    const SSL_CIPHER *c = SSL_CONNECTION_GET_SSL(s)->method->get_cipher_by_char(ptr);
 
     if (c == NULL || (!all && c->valid == 0))
         return NULL;
@@ -2172,7 +2199,7 @@ int ssl_cipher_get_overhead(const SSL_CIPHER *c, size_t *mac_overhead,
         if (e_md == NULL)
             return 0;
 
-        mac = EVP_MD_size(e_md);
+        mac = EVP_MD_get_size(e_md);
         if (c->algorithm_enc != SSL_eNULL) {
             int cipher_nid = SSL_CIPHER_get_cipher_nid(c);
             const EVP_CIPHER *e_ciph = EVP_get_cipherbynid(cipher_nid);
@@ -2180,12 +2207,12 @@ int ssl_cipher_get_overhead(const SSL_CIPHER *c, size_t *mac_overhead,
             /* If it wasn't AEAD or SSL_eNULL, we expect it to be a
                known CBC cipher. */
             if (e_ciph == NULL ||
-                EVP_CIPHER_mode(e_ciph) != EVP_CIPH_CBC_MODE)
+                EVP_CIPHER_get_mode(e_ciph) != EVP_CIPH_CBC_MODE)
                 return 0;
 
             in = 1; /* padding length byte */
-            out = EVP_CIPHER_iv_length(e_ciph);
-            blk = EVP_CIPHER_block_size(e_ciph);
+            out = EVP_CIPHER_get_iv_length(e_ciph);
+            blk = EVP_CIPHER_get_block_size(e_ciph);
         }
     }
 

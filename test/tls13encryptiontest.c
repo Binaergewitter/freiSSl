@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2016-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -304,12 +304,13 @@ static int test_record(SSL3_RECORD *rec, RECORD_DATA *recd, int enc)
 static int test_tls13_encryption(void)
 {
     SSL_CTX *ctx = NULL;
-    SSL *s = NULL;
+    SSL *ssl = NULL;
     SSL3_RECORD rec;
     unsigned char *key = NULL, *iv = NULL, *seq = NULL;
     const EVP_CIPHER *ciph = EVP_aes_128_gcm();
     int ret = 0;
     size_t ivlen, ctr;
+    SSL_CONNECTION *s;
 
     /*
      * Encrypted TLSv1.3 records always have an outer content type of
@@ -325,8 +326,8 @@ static int test_tls13_encryption(void)
         goto err;
     }
 
-    s = SSL_new(ctx);
-    if (!TEST_ptr(s)) {
+    ssl = SSL_new(ctx);
+    if (!TEST_ptr(ssl) || !TEST_ptr(s = SSL_CONNECTION_FROM_SSL_ONLY(ssl))) {
         TEST_info("Failed creating SSL");
         goto err;
     }
@@ -339,7 +340,7 @@ static int test_tls13_encryption(void)
     if (!TEST_ptr(s->enc_write_ctx))
         goto err;
 
-    s->s3.tmp.new_cipher = SSL_CIPHER_find(s, TLS13_AES_128_GCM_SHA256_BYTES);
+    s->s3.tmp.new_cipher = SSL_CIPHER_find(ssl, TLS13_AES_128_GCM_SHA256_BYTES);
     if (!TEST_ptr(s->s3.tmp.new_cipher)) {
         TEST_info("Failed to find cipher");
         goto err;
@@ -347,7 +348,7 @@ static int test_tls13_encryption(void)
 
     for (ctr = 0; ctr < OSSL_NELEM(refdata); ctr++) {
         /* Load the record */
-        ivlen = EVP_CIPHER_iv_length(ciph);
+        ivlen = EVP_CIPHER_get_iv_length(ciph);
         if (!load_record(&rec, &refdata[ctr], &key, s->read_iv, ivlen,
                          RECORD_LAYER_get_read_sequence(&s->rlayer))) {
             TEST_error("Failed loading key into EVP_CIPHER_CTX");
@@ -405,7 +406,7 @@ static int test_tls13_encryption(void)
     OPENSSL_free(key);
     OPENSSL_free(iv);
     OPENSSL_free(seq);
-    SSL_free(s);
+    SSL_free(ssl);
     SSL_CTX_free(ctx);
     return ret;
 }

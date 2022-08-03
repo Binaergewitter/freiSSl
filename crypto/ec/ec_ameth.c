@@ -23,7 +23,7 @@
 #include "crypto/evp.h"
 #include "crypto/x509.h"
 #include <openssl/core_names.h>
-#include "openssl/param_build.h"
+#include <openssl/param_build.h>
 #include "ec_local.h"
 
 static int eckey_param2type(int *pptype, void **ppval, const EC_KEY *ec_key)
@@ -165,7 +165,7 @@ static int eckey_priv_decode_ex(EVP_PKEY *pkey, const PKCS8_PRIV_KEY_INFO *p8,
 static int eckey_priv_encode(PKCS8_PRIV_KEY_INFO *p8, const EVP_PKEY *pkey)
 {
     EC_KEY ec_key = *(pkey->pkey.ec);
-    unsigned char *ep, *p;
+    unsigned char *ep = NULL;
     int eplen, ptype;
     void *pval;
     unsigned int old_flags;
@@ -184,26 +184,18 @@ static int eckey_priv_encode(PKCS8_PRIV_KEY_INFO *p8, const EVP_PKEY *pkey)
     old_flags = EC_KEY_get_enc_flags(&ec_key);
     EC_KEY_set_enc_flags(&ec_key, old_flags | EC_PKEY_NO_PARAMETERS);
 
-    eplen = i2d_ECPrivateKey(&ec_key, NULL);
-    if (!eplen) {
+    eplen = i2d_ECPrivateKey(&ec_key, &ep);
+    if (eplen <= 0) {
         ERR_raise(ERR_LIB_EC, ERR_R_EC_LIB);
-        return 0;
-    }
-    ep = OPENSSL_malloc(eplen);
-    if (ep == NULL) {
-        ERR_raise(ERR_LIB_EC, ERR_R_MALLOC_FAILURE);
-        return 0;
-    }
-    p = ep;
-    if (!i2d_ECPrivateKey(&ec_key, &p)) {
-        OPENSSL_free(ep);
-        ERR_raise(ERR_LIB_EC, ERR_R_EC_LIB);
+        ASN1_STRING_free(pval);
         return 0;
     }
 
     if (!PKCS8_pkey_set0(p8, OBJ_nid2obj(NID_X9_62_id_ecPublicKey), 0,
                          ptype, pval, ep, eplen)) {
-        OPENSSL_free(ep);
+        ERR_raise(ERR_LIB_EC, ERR_R_EC_LIB);
+        ASN1_STRING_free(pval);
+        OPENSSL_clear_free(ep, eplen);
         return 0;
     }
 
@@ -405,7 +397,7 @@ static int ec_pkey_ctrl(EVP_PKEY *pkey, int op, long arg1, void *arg2)
 {
     switch (op) {
     case ASN1_PKEY_CTRL_DEFAULT_MD_NID:
-        if (EVP_PKEY_id(pkey) == EVP_PKEY_SM2) {
+        if (EVP_PKEY_get_id(pkey) == EVP_PKEY_SM2) {
             /* For SM2, the only valid digest-alg is SM3 */
             *(int *)arg2 = NID_sm3;
             return 2;            /* Make it mandatory */
@@ -478,8 +470,8 @@ size_t ec_pkey_dirty_cnt(const EVP_PKEY *pkey)
 
 static
 int ec_pkey_export_to(const EVP_PKEY *from, void *to_keydata,
-                      EVP_KEYMGMT *to_keymgmt, OSSL_LIB_CTX *libctx,
-                      const char *propq)
+                      OSSL_FUNC_keymgmt_import_fn *importer,
+                      OSSL_LIB_CTX *libctx, const char *propq)
 {
     const EC_KEY *eckey = NULL;
     const EC_GROUP *ecg = NULL;
@@ -496,13 +488,6 @@ int ec_pkey_export_to(const EVP_PKEY *from, void *to_keydata,
     if (from == NULL
             || (eckey = from->pkey.ec) == NULL
             || (ecg = EC_KEY_get0_group(eckey)) == NULL)
-        return 0;
-
-    /*
-     * If the EC_KEY method is foreign, then we can't be sure of anything,
-     * and can therefore not export or pretend to export.
-     */
-    if (EC_KEY_get_method(eckey) != EC_KEY_OpenSSL())
         return 0;
 
     tmpl = OSSL_PARAM_BLD_new();
@@ -581,7 +566,7 @@ int ec_pkey_export_to(const EVP_PKEY *from, void *to_keydata,
         if (ecbits <= 0)
             goto err;
 
-        sz = (ecbits + 7 ) / 8;
+        sz = (ecbits + 7) / 8;
         if (!OSSL_PARAM_BLD_push_BN_pad(tmpl,
                                         OSSL_PKEY_PARAM_PRIV_KEY,
                                         priv_key, sz))
@@ -607,7 +592,7 @@ int ec_pkey_export_to(const EVP_PKEY *from, void *to_keydata,
     params = OSSL_PARAM_BLD_to_param(tmpl);
 
     /* We export, the provider imports */
-    rv = evp_keymgmt_import(to_keymgmt, to_keydata, selection, params);
+    rv = importer(to_keydata, selection, params);
 
  err:
     OSSL_PARAM_BLD_free(tmpl);

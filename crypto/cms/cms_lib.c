@@ -1,5 +1,5 @@
 /*
- * Copyright 2008-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2008-2022 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -14,7 +14,6 @@
 #include <openssl/bio.h>
 #include <openssl/asn1.h>
 #include <openssl/cms.h>
-#include <openssl/cms.h>
 #include "internal/sizes.h"
 #include "crypto/x509.h"
 #include "cms_local.h"
@@ -28,9 +27,12 @@ CMS_ContentInfo *d2i_CMS_ContentInfo(CMS_ContentInfo **a,
                                      const unsigned char **in, long len)
 {
     CMS_ContentInfo *ci;
+    const CMS_CTX *ctx = ossl_cms_get0_cmsctx(a == NULL ? NULL : *a);
 
-    ci = (CMS_ContentInfo *)ASN1_item_d2i((ASN1_VALUE **)a, in, len,
-                                          (CMS_ContentInfo_it()));
+    ci = (CMS_ContentInfo *)ASN1_item_d2i_ex((ASN1_VALUE **)a, in, len,
+                                          (CMS_ContentInfo_it()),
+                                          ossl_cms_ctx_get0_libctx(ctx),
+                                          ossl_cms_ctx_get0_propq(ctx));
     if (ci != NULL)
         ossl_cms_resolve_libctx(ci);
     return ci;
@@ -45,7 +47,8 @@ CMS_ContentInfo *CMS_ContentInfo_new_ex(OSSL_LIB_CTX *libctx, const char *propq)
 {
     CMS_ContentInfo *ci;
 
-    ci = (CMS_ContentInfo *)ASN1_item_new(ASN1_ITEM_rptr(CMS_ContentInfo));
+    ci = (CMS_ContentInfo *)ASN1_item_new_ex(ASN1_ITEM_rptr(CMS_ContentInfo),
+                                             libctx, propq);
     if (ci != NULL) {
         ci->ctx.libctx = libctx;
         ci->ctx.propq = NULL;
@@ -204,6 +207,13 @@ err:
 /* unfortunately cannot constify SMIME_write_ASN1() due to this function */
 int CMS_dataFinal(CMS_ContentInfo *cms, BIO *cmsbio)
 {
+    return ossl_cms_DataFinal(cms, cmsbio, NULL, 0);
+}
+
+int ossl_cms_DataFinal(CMS_ContentInfo *cms, BIO *cmsbio,
+                       const unsigned char *precomp_md,
+                       unsigned int precomp_mdlen)
+{
     ASN1_OCTET_STRING **pos = CMS_get0_content(cms);
 
     if (pos == NULL)
@@ -241,7 +251,7 @@ int CMS_dataFinal(CMS_ContentInfo *cms, BIO *cmsbio)
         return ossl_cms_AuthEnvelopedData_final(cms, cmsbio);
 
     case NID_pkcs7_signed:
-        return ossl_cms_SignedData_final(cms, cmsbio);
+        return ossl_cms_SignedData_final(cms, cmsbio, precomp_md, precomp_mdlen);
 
     case NID_pkcs7_digest:
         return ossl_cms_DigestedData_do_final(cms, cmsbio, 0);
@@ -455,12 +465,12 @@ int ossl_cms_DigestAlgorithm_find_ctx(EVP_MD_CTX *mctx, BIO *chain,
             return 0;
         }
         BIO_get_md_ctx(chain, &mtmp);
-        if (EVP_MD_CTX_type(mtmp) == nid
+        if (EVP_MD_CTX_get_type(mtmp) == nid
             /*
              * Workaround for broken implementations that use signature
              * algorithm OID instead of digest.
              */
-            || EVP_MD_pkey_type(EVP_MD_CTX_get0_md(mtmp)) == nid)
+            || EVP_MD_get_pkey_type(EVP_MD_CTX_get0_md(mtmp)) == nid)
             return EVP_MD_CTX_copy_ex(mctx, mtmp);
         chain = BIO_next(chain);
     }
@@ -630,7 +640,7 @@ STACK_OF(X509) *CMS_get1_certs(CMS_ContentInfo *cms)
         if (cch->type == 0) {
             if (!ossl_x509_add_cert_new(&certs, cch->d.certificate,
                                         X509_ADD_FLAG_UP_REF)) {
-                sk_X509_pop_free(certs, X509_free);
+                OSSL_STACK_OF_X509_free(certs);
                 return NULL;
             }
         }

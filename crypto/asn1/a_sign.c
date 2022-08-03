@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2022 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -78,7 +78,7 @@ int ASN1_sign(i2d_of_void *i2d, X509_ALGOR *algor1, X509_ALGOR *algor2,
     }
     inll = (size_t)inl;
     buf_in = OPENSSL_malloc(inll);
-    outll = outl = EVP_PKEY_size(pkey);
+    outll = outl = EVP_PKEY_get_size(pkey);
     buf_out = OPENSSL_malloc(outll);
     if (buf_in == NULL || buf_out == NULL) {
         outl = 0;
@@ -96,16 +96,13 @@ int ASN1_sign(i2d_of_void *i2d, X509_ALGOR *algor1, X509_ALGOR *algor2,
         ERR_raise(ERR_LIB_ASN1, ERR_R_EVP_LIB);
         goto err;
     }
-    OPENSSL_free(signature->data);
-    signature->data = buf_out;
+    ASN1_STRING_set0(signature, buf_out, outl);
     buf_out = NULL;
-    signature->length = outl;
     /*
      * In the interests of compatibility, I'll make sure that the bit string
      * has a 'not-used bits' value of 0
      */
-    signature->flags &= ~(ASN1_STRING_FLAG_BITS_LEFT | 0x07);
-    signature->flags |= ASN1_STRING_FLAG_BITS_LEFT;
+    ossl_asn1_string_set_bits_left(signature, 0);
  err:
     EVP_MD_CTX_free(ctx);
     OPENSSL_clear_free((char *)buf_in, inll);
@@ -143,7 +140,7 @@ int ASN1_item_sign_ex(const ASN1_ITEM *it, X509_ALGOR *algor1,
     rv = ASN1_item_sign_ctx(it, algor1, algor2, signature, data, ctx);
 
  err:
-    EVP_PKEY_CTX_free(EVP_MD_CTX_pkey_ctx(ctx));
+    EVP_PKEY_CTX_free(EVP_MD_CTX_get_pkey_ctx(ctx));
     EVP_MD_CTX_free(ctx);
     return rv;
 }
@@ -160,7 +157,7 @@ int ASN1_item_sign_ctx(const ASN1_ITEM *it, X509_ALGOR *algor1,
     int rv, pkey_id;
 
     md = EVP_MD_CTX_get0_md(ctx);
-    pkey = EVP_PKEY_CTX_get0_pkey(EVP_MD_CTX_pkey_ctx(ctx));
+    pkey = EVP_PKEY_CTX_get0_pkey(EVP_MD_CTX_get_pkey_ctx(ctx));
 
     if (pkey == NULL) {
         ERR_raise(ERR_LIB_ASN1, ASN1_R_CONTEXT_NOT_INITIALISED);
@@ -168,7 +165,7 @@ int ASN1_item_sign_ctx(const ASN1_ITEM *it, X509_ALGOR *algor1,
     }
 
     if (pkey->ameth == NULL) {
-        EVP_PKEY_CTX *pctx = EVP_MD_CTX_pkey_ctx(ctx);
+        EVP_PKEY_CTX *pctx = EVP_MD_CTX_get_pkey_ctx(ctx);
         OSSL_PARAM params[2];
         unsigned char aid[128];
         size_t aid_len = 0;
@@ -238,7 +235,7 @@ int ASN1_item_sign_ctx(const ASN1_ITEM *it, X509_ALGOR *algor1,
 
         pkey_id =
 #ifndef OPENSSL_NO_SM2
-            EVP_PKEY_id(pkey) == NID_sm2 ? NID_sm2 :
+            EVP_PKEY_get_id(pkey) == NID_sm2 ? NID_sm2 :
 #endif
             pkey->ameth->pkey_id;
 
@@ -247,16 +244,14 @@ int ASN1_item_sign_ctx(const ASN1_ITEM *it, X509_ALGOR *algor1,
             goto err;
         }
 
-        if (pkey->ameth->pkey_flags & ASN1_PKEY_SIGPARAM_NULL)
-            paramtype = V_ASN1_NULL;
-        else
-            paramtype = V_ASN1_UNDEF;
-
-        if (algor1)
-            X509_ALGOR_set0(algor1, OBJ_nid2obj(signid), paramtype, NULL);
-        if (algor2)
-            X509_ALGOR_set0(algor2, OBJ_nid2obj(signid), paramtype, NULL);
-
+        paramtype = pkey->ameth->pkey_flags & ASN1_PKEY_SIGPARAM_NULL ?
+            V_ASN1_NULL : V_ASN1_UNDEF;
+        if (algor1 != NULL
+            && !X509_ALGOR_set0(algor1, OBJ_nid2obj(signid), paramtype, NULL))
+            goto err;
+        if (algor2 != NULL
+            && !X509_ALGOR_set0(algor2, OBJ_nid2obj(signid), paramtype, NULL))
+            goto err;
     }
 
     buf_len = ASN1_item_i2d(data, &buf_in, it);
@@ -284,16 +279,13 @@ int ASN1_item_sign_ctx(const ASN1_ITEM *it, X509_ALGOR *algor1,
         ERR_raise(ERR_LIB_ASN1, ERR_R_EVP_LIB);
         goto err;
     }
-    OPENSSL_free(signature->data);
-    signature->data = buf_out;
+    ASN1_STRING_set0(signature, buf_out, outl);
     buf_out = NULL;
-    signature->length = outl;
     /*
      * In the interests of compatibility, I'll make sure that the bit string
      * has a 'not-used bits' value of 0
      */
-    signature->flags &= ~(ASN1_STRING_FLAG_BITS_LEFT | 0x07);
-    signature->flags |= ASN1_STRING_FLAG_BITS_LEFT;
+    ossl_asn1_string_set_bits_left(signature, 0);
  err:
     OPENSSL_clear_free((char *)buf_in, inl);
     OPENSSL_clear_free((char *)buf_out, outll);

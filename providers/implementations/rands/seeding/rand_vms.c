@@ -1,5 +1,5 @@
 /*
- * Copyright 2001-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2001-2022 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -7,7 +7,7 @@
  * https://www.openssl.org/source/license.html
  */
 
-#include "e_os.h"
+#include "internal/e_os.h"
 
 #define __NEW_STARLET 1         /* New starlet definitions since VMS 7.0 */
 #include <unistd.h>
@@ -160,7 +160,7 @@ static const struct item_st RMI_item_data[] = {
     {4,   RMI$_BLKOUT},
     {4,   RMI$_DIRIN},
     {4,   RMI$_DIROUT},
-    /* We currently get a fault when trying these.  TODO: To be figured out. */
+    /* We currently get a fault when trying these */
 #if 0
     {140, RMI$_MSCP_EVERYTHING},   /* 35 32-bit words */
     {152, RMI$_DDTM_ALL},          /* 38 32-bit words */
@@ -388,7 +388,7 @@ size_t data_collect_method(RAND_POOL *pool)
         uint32_t status;
         uint32_t efn;
         IOSB iosb;
-        $DESCRIPTOR(SYSDEVICE,"SYS$SYSDEVICE:");
+        $DESCRIPTOR(SYSDEVICE, "SYS$SYSDEVICE:");
 
         if ((status = sys$getdviw(EFN$C_ENF, 0, &SYSDEVICE, DVI_items,
                                   0, 0, 0, 0, 0)) != SS$_NORMAL) {
@@ -479,7 +479,7 @@ int ossl_pool_add_nonce_data(RAND_POOL *pool)
     struct {
         pid_t pid;
         CRYPTO_THREAD_ID tid;
-        uint64_t time;
+        unsigned __int64 time;
     } data;
 
     /* Erase the entire structure including any padding */
@@ -580,7 +580,7 @@ int ossl_rand_pool_add_additional_data(RAND_POOL *pool)
 {
     struct {
         CRYPTO_THREAD_ID tid;
-        uint64_t time;
+        unsigned __int64 time;
     } data;
 
     /* Erase the entire structure including any padding */

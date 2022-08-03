@@ -48,6 +48,7 @@ B<openssl> B<s_client>
 [B<-reconnect>]
 [B<-showcerts>]
 [B<-prexit>]
+[B<-no-interactive>]
 [B<-debug>]
 [B<-trace>]
 [B<-nocommands>]
@@ -56,6 +57,8 @@ B<openssl> B<s_client>
 [B<-msg>]
 [B<-timeout>]
 [B<-mtu> I<size>]
+[B<-no_etm>]
+[B<-no_ems>]
 [B<-keymatexport> I<label>]
 [B<-keymatexportlen> I<len>]
 [B<-msgfile> I<filename>]
@@ -84,6 +87,7 @@ B<openssl> B<s_client>
 [B<-no_comp>]
 [B<-brief>]
 [B<-legacy_server_connect>]
+[B<-no_legacy_server_connect>]
 [B<-allow_no_dhe_kex>]
 [B<-sigalgs> I<sigalglist>]
 [B<-curves> I<curvelist>]
@@ -115,6 +119,8 @@ B<openssl> B<s_client>
 [B<-srp_lateuser>]
 [B<-srp_moregroups>]
 [B<-srp_strength> I<number>]
+[B<-ktls>]
+[B<-tfo>]
 {- $OpenSSL::safe::opt_name_synopsis -}
 {- $OpenSSL::safe::opt_version_synopsis -}
 {- $OpenSSL::safe::opt_x_synopsis -}
@@ -125,16 +131,6 @@ B<openssl> B<s_client>
 {- $OpenSSL::safe::opt_engine_synopsis -}[B<-ssl_client_engine> I<id>]
 {- $OpenSSL::safe::opt_v_synopsis -}
 [I<host>:I<port>]
-
-=for openssl ifdef engine ssl_client_engine ct noct ctlogfile
-
-=for openssl ifdef ssl3 unix 4 6 use_srtp status trace wdebug nextprotoneg
-
-=for openssl ifdef ssl3 tls1 tls1_1 tls1_2 tls1_3 dtls mtu dtls1 dtls1_2
-
-=for openssl ifdef sctp_label_bug sctp
-
-=for openssl ifdef srpuser srppass srp_lateuser srp_moregroups srp_strength
 
 =head1 DESCRIPTION
 
@@ -282,7 +278,7 @@ See L<openssl-format-options(1)> for details.
 
 =item B<-pass> I<arg>
 
-the private key and certifiate file password source.
+the private key and certificate file password source.
 For more information about the format of I<arg>
 see L<openssl-passphrase-options(1)>.
 
@@ -426,6 +422,10 @@ attempt is made to access a certain URL. Note: the output produced by this
 option is not always accurate because a connection might never have been
 established.
 
+=item B<-no-interactive>
+
+This flag can be used to run the client in a non-interactive mode.
+
 =item B<-state>
 
 Prints out the SSL session states.
@@ -458,6 +458,14 @@ Enable send/receive timeout on DTLS connections.
 
 Set MTU of the link layer to the specified size.
 
+=item B<-no_etm>
+
+Disable Encrypt-then-MAC negotiation.
+
+=item B<-no_ems>
+
+Disable Extended master secret negotiation.
+
 =item B<-keymatexport> I<label>
 
 Export keying material using the specified label.
@@ -470,8 +478,7 @@ Show all protocol messages with hex dump.
 
 =item B<-trace>
 
-Show verbose trace output of protocol messages. OpenSSL needs to be compiled
-with B<enable-ssl-trace> for this option to work.
+Show verbose trace output of protocol messages.
 
 =item B<-msgfile> I<filename>
 
@@ -771,6 +778,16 @@ Tolerate other than the known B<g> and B<N> values.
 Set the minimal acceptable length, in bits, for B<N>.  This option is
 deprecated.
 
+=item B<-ktls>
+
+Enable Kernel TLS for sending and receiving.
+This option was introduced in OpenSSL 3.1.0.
+Kernel TLS is off by default as of OpenSSL 3.1.0.
+
+=item B<-tfo>
+
+Enable creation of connections via TCP fast open (RFC7413).
+
 {- $OpenSSL::safe::opt_version_item -}
 
 {- $OpenSSL::safe::opt_name_item -}
@@ -913,9 +930,11 @@ The B<-certform> option has become obsolete in OpenSSL 3.0.0 and has no effect.
 
 The B<-engine> option was deprecated in OpenSSL 3.0.
 
+The -tfo option was added in OpenSSL 3.1.
+
 =head1 COPYRIGHT
 
-Copyright 2000-2021 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2000-2022 The OpenSSL Project Authors. All Rights Reserved.
 
 Licensed under the Apache License 2.0 (the "License").  You may not use
 this file except in compliance with the License.  You can obtain a copy

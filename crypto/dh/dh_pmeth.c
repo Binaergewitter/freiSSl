@@ -296,7 +296,7 @@ static DH *ffc_params_generate(OSSL_LIB_CTX *libctx, DH_PKEY_CTX *dctx,
     }
 
     if (dctx->md != NULL)
-        ossl_ffc_set_digest(&ret->params, EVP_MD_name(dctx->md), NULL);
+        ossl_ffc_set_digest(&ret->params, EVP_MD_get0_name(dctx->md), NULL);
 
 # ifndef FIPS_MODULE
     if (dctx->paramgen_type == DH_PARAMGEN_TYPE_FIPS_186_2)
@@ -392,7 +392,7 @@ static int pkey_dh_keygen(EVP_PKEY_CTX *ctx, EVP_PKEY *pkey)
     /* Note: if error return, pkey is freed by parent routine */
     if (ctx->pkey != NULL && !EVP_PKEY_copy_parameters(pkey, ctx->pkey))
         return 0;
-    return DH_generate_key(pkey->pkey.dh);
+    return DH_generate_key((DH *)EVP_PKEY_get0_DH(pkey));
 }
 
 static int pkey_dh_derive(EVP_PKEY_CTX *ctx, unsigned char *key,
@@ -408,7 +408,7 @@ static int pkey_dh_derive(EVP_PKEY_CTX *ctx, unsigned char *key,
         ERR_raise(ERR_LIB_DH, DH_R_KEYS_NOT_SET);
         return 0;
     }
-    dh = ctx->pkey->pkey.dh;
+    dh = (DH *)EVP_PKEY_get0_DH(ctx->pkey);
     dhpub = EVP_PKEY_get0_DH(ctx->peerkey);
     if (dhpub == NULL) {
         ERR_raise(ERR_LIB_DH, DH_R_KEYS_NOT_SET);

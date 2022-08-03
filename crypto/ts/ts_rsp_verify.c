@@ -158,7 +158,7 @@ int TS_RESP_verify_signature(PKCS7 *token, STACK_OF(X509) *certs,
  err:
     BIO_free_all(p7bio);
     sk_X509_free(untrusted);
-    sk_X509_pop_free(chain, X509_free);
+    OSSL_STACK_OF_X509_free(chain);
     sk_X509_free(signers);
 
     return ret;
@@ -447,7 +447,7 @@ static int ts_compute_imprint(BIO *data, TS_TST_INFO *tst_info,
     }
     (void)ERR_pop_to_mark();
 
-    length = EVP_MD_size(md);
+    length = EVP_MD_get_size(md);
     if (length < 0)
         goto err;
     *imprint_len = length;

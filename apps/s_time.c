@@ -22,7 +22,7 @@
 #include <openssl/pem.h>
 #include "s_apps.h"
 #include <openssl/err.h>
-#include <internal/sockets.h>
+#include "internal/sockets.h"
 #if !defined(OPENSSL_SYS_MSDOS)
 # include <unistd.h>
 #endif
@@ -234,8 +234,7 @@ int s_time_main(int argc, char **argv)
     }
 
     /* No extra arguments. */
-    argc = opt_num_rest();
-    if (argc != 0)
+    if (!opt_check_rest_arg(NULL))
         goto opthelp;
 
     if (cipher == NULL)
@@ -394,10 +393,13 @@ int s_time_main(int argc, char **argv)
     printf
         ("\n\n%d connections in %.2fs; %.2f connections/user sec, bytes read %ld\n",
          nConn, totalTime, ((double)nConn / totalTime), bytes_read);
-    printf
-        ("%d connections in %ld real seconds, %ld bytes read per connection\n",
-         nConn, (long)time(NULL) - finishtime + maxtime, bytes_read / nConn);
-
+    if (nConn > 0)
+        printf
+            ("%d connections in %ld real seconds, %ld bytes read per connection\n",
+             nConn, (long)time(NULL) - finishtime + maxtime, bytes_read / nConn);
+    else
+        printf("0 connections in %ld real seconds\n",
+               (long)time(NULL) - finishtime + maxtime);
     ret = 0;
 
  end:

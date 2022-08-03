@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2022 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -26,7 +26,7 @@
 # define OSSL_provider_init PROVIDER_INIT_FUNCTION_NAME
 #endif
 
-#include "e_os.h"
+#include "internal/e_os.h"
 #include <openssl/core.h>
 #include <openssl/core_dispatch.h>
 #include <openssl/err.h>
@@ -39,7 +39,6 @@ typedef struct p_test_ctx {
     char *thisfunc;
     const OSSL_CORE_HANDLE *handle;
     OSSL_LIB_CTX *libctx;
-    OSSL_PROVIDER *deflt;
 } P_TEST_CTX;
 
 static OSSL_FUNC_core_gettable_params_fn *c_gettable_params = NULL;
@@ -60,6 +59,18 @@ static OSSL_FUNC_provider_gettable_params_fn p_gettable_params;
 static OSSL_FUNC_provider_get_params_fn p_get_params;
 static OSSL_FUNC_provider_get_reason_strings_fn p_get_reason_strings;
 static OSSL_FUNC_provider_teardown_fn p_teardown;
+
+static void p_set_error(int lib, int reason, const char *file, int line,
+                        const char *func, const char *fmt, ...)
+{
+    va_list ap;
+
+    va_start(ap, fmt);
+    c_new_error(NULL);
+    c_set_error_debug(NULL, file, line, func);
+    c_vset_error(NULL, ERR_PACK(lib, 0, reason), fmt, ap);
+    va_end(ap);
+}
 
 static const OSSL_PARAM *p_gettable_params(void *_)
 {
@@ -128,6 +139,20 @@ static int p_get_params(void *provctx, OSSL_PARAM params[])
             EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
             const char *msg = "Hello world";
             unsigned char out[16];
+            OSSL_PROVIDER *deflt;
+
+            /*
+            * "default" has not been loaded into the parent libctx. We should be able
+            * to explicitly load it as a non-child provider.
+            */
+            deflt = OSSL_PROVIDER_load(ctx->libctx, "default");
+            if (deflt == NULL
+                    || !OSSL_PROVIDER_available(ctx->libctx, "default")) {
+                /* We set error "3" for a failure to load the default provider */
+                p_set_error(ERR_LIB_PROV, 3, ctx->thisfile, OPENSSL_LINE,
+                            ctx->thisfunc, NULL);
+                ok = 0;
+            }
 
             /*
              * We should have the default provider available that we loaded
@@ -135,7 +160,8 @@ static int p_get_params(void *provctx, OSSL_PARAM params[])
              * from the parent libctx. We should also have "this" provider
              * available.
              */
-            if (OSSL_PROVIDER_available(ctx->libctx, "default")
+            if (ok
+                    && OSSL_PROVIDER_available(ctx->libctx, "default")
                     && OSSL_PROVIDER_available(ctx->libctx, "base")
                     && OSSL_PROVIDER_available(ctx->libctx, "legacy")
                     && OSSL_PROVIDER_available(ctx->libctx, "p_test")
@@ -144,11 +170,12 @@ static int p_get_params(void *provctx, OSSL_PARAM params[])
                 if (EVP_DigestInit_ex(mdctx, md4, NULL)
                         && EVP_DigestUpdate(mdctx, (const unsigned char *)msg,
                                             strlen(msg))
-                        &&EVP_DigestFinal(mdctx, out, NULL))
+                        && EVP_DigestFinal(mdctx, out, NULL))
                     digestsuccess = 1;
             }
             EVP_MD_CTX_free(mdctx);
             EVP_MD_free(md4);
+            OSSL_PROVIDER_unload(deflt);
 #endif
             if (p->data_size >= sizeof(digestsuccess)) {
                 *(unsigned int *)p->data = digestsuccess;
@@ -156,21 +183,25 @@ static int p_get_params(void *provctx, OSSL_PARAM params[])
             } else {
                 ok = 0;
             }
+        } else if (strcmp(p->key, "stop-property-mirror") == 0) {
+            /*
+             * Setting the default properties explicitly should stop mirroring
+             * of properties from the parent libctx.
+             */
+            unsigned int stopsuccess = 0;
+
+#ifdef PROVIDER_INIT_FUNCTION_NAME
+            stopsuccess = EVP_set_default_properties(ctx->libctx, NULL);
+#endif
+            if (p->data_size >= sizeof(stopsuccess)) {
+                *(unsigned int *)p->data = stopsuccess;
+                p->return_size = sizeof(stopsuccess);
+            } else {
+                ok = 0;
+            }
         }
     }
     return ok;
-}
-
-static void p_set_error(int lib, int reason, const char *file, int line,
-                        const char *func, const char *fmt, ...)
-{
-    va_list ap;
-
-    va_start(ap, fmt);
-    c_new_error(NULL);
-    c_set_error_debug(NULL, file, line, func);
-    c_vset_error(NULL, ERR_PACK(lib, 0, reason), fmt, ap);
-    va_end(ap);
 }
 
 static const OSSL_ITEM *p_get_reason_strings(void *_)
@@ -252,17 +283,16 @@ int OSSL_provider_init(const OSSL_CORE_HANDLE *handle,
         return 0;
     }
     /*
-     * "default" has not been loaded into the parent libctx. We should be able
-     * to explicitly load it as a non-child provider.
+     * The default provider is loaded - but the default properties should not
+     * allow its use.
      */
-    ctx->deflt = OSSL_PROVIDER_load(ctx->libctx, "default");
-    if (ctx->deflt == NULL
-            || !OSSL_PROVIDER_available(ctx->libctx, "default")) {
-        /* We set error "3" for a failure to load the default provider */
-        p_set_error(ERR_LIB_PROV, 3, ctx->thisfile, OPENSSL_LINE, ctx->thisfunc,
-                    NULL);
-        p_teardown(ctx);
-        return 0;
+    {
+        EVP_MD *sha256 = EVP_MD_fetch(ctx->libctx, "SHA2-256", NULL);
+        if (sha256 != NULL) {
+            EVP_MD_free(sha256);
+            p_teardown(ctx);
+            return 0;
+        }
     }
 #endif
 
@@ -282,7 +312,6 @@ static void p_teardown(void *provctx)
     P_TEST_CTX *ctx = (P_TEST_CTX *)provctx;
 
 #ifdef PROVIDER_INIT_FUNCTION_NAME
-    OSSL_PROVIDER_unload(ctx->deflt);
     OSSL_LIB_CTX_free(ctx->libctx);
 #endif
     free(ctx->thisfile);

@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2022 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -7,7 +7,10 @@
  * https://www.openssl.org/source/license.html
  */
 
-/* callback functions used by s_client, s_server, and s_time */
+/*
+ * callback functions used by s_client, s_server, and s_time,
+ * as well as other common logic for those apps
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h> /* for memcpy() and strcmp() */
@@ -76,22 +79,28 @@ int verify_callback(int ok, X509_STORE_CTX *ctx)
     }
     switch (err) {
     case X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT:
-        BIO_puts(bio_err, "issuer= ");
-        X509_NAME_print_ex(bio_err, X509_get_issuer_name(err_cert),
-                           0, get_nameopt());
-        BIO_puts(bio_err, "\n");
+        if (err_cert != NULL) {
+            BIO_puts(bio_err, "issuer= ");
+            X509_NAME_print_ex(bio_err, X509_get_issuer_name(err_cert),
+                               0, get_nameopt());
+            BIO_puts(bio_err, "\n");
+        }
         break;
     case X509_V_ERR_CERT_NOT_YET_VALID:
     case X509_V_ERR_ERROR_IN_CERT_NOT_BEFORE_FIELD:
-        BIO_printf(bio_err, "notBefore=");
-        ASN1_TIME_print(bio_err, X509_get0_notBefore(err_cert));
-        BIO_printf(bio_err, "\n");
+        if (err_cert != NULL) {
+            BIO_printf(bio_err, "notBefore=");
+            ASN1_TIME_print(bio_err, X509_get0_notBefore(err_cert));
+            BIO_printf(bio_err, "\n");
+        }
         break;
     case X509_V_ERR_CERT_HAS_EXPIRED:
     case X509_V_ERR_ERROR_IN_CERT_NOT_AFTER_FIELD:
-        BIO_printf(bio_err, "notAfter=");
-        ASN1_TIME_print(bio_err, X509_get0_notAfter(err_cert));
-        BIO_printf(bio_err, "\n");
+        if (err_cert != NULL) {
+            BIO_printf(bio_err, "notAfter=");
+            ASN1_TIME_print(bio_err, X509_get0_notAfter(err_cert));
+            BIO_printf(bio_err, "\n");
+        }
         break;
     case X509_V_ERR_NO_EXPLICIT_POLICY:
         if (!verify_args.quiet)
@@ -146,6 +155,7 @@ int set_cert_key_stuff(SSL_CTX *ctx, X509 *cert, EVP_PKEY *key,
                        STACK_OF(X509) *chain, int build_chain)
 {
     int chflags = chain ? SSL_BUILD_CHAIN_FLAG_CHECK : 0;
+
     if (cert == NULL)
         return 1;
     if (SSL_CTX_use_certificate(ctx, cert) <= 0) {
@@ -199,6 +209,7 @@ static void ssl_print_client_cert_types(BIO *bio, SSL *s)
     const unsigned char *p;
     int i;
     int cert_type_num = SSL_get0_certificate_types(s, &p);
+
     if (!cert_type_num)
         return;
     BIO_puts(bio, "Client Certificate Types: ");
@@ -228,22 +239,22 @@ static const char *get_sigtype(int nid)
     case EVP_PKEY_DSA:
         return "DSA";
 
-     case EVP_PKEY_EC:
+    case EVP_PKEY_EC:
         return "ECDSA";
 
-     case NID_ED25519:
+    case NID_ED25519:
         return "Ed25519";
 
-     case NID_ED448:
+    case NID_ED448:
         return "Ed448";
 
-     case NID_id_GostR3410_2001:
+    case NID_id_GostR3410_2001:
         return "gost2001";
 
-     case NID_id_GostR3410_2012_256:
+    case NID_id_GostR3410_2012_256:
         return "gost2012_256";
 
-     case NID_id_GostR3410_2012_512:
+    case NID_id_GostR3410_2012_512:
         return "gost2012_512";
 
     default:
@@ -254,6 +265,7 @@ static const char *get_sigtype(int nid)
 static int do_print_sigalgs(BIO *out, SSL *s, int shared)
 {
     int i, nsig, client;
+
     client = SSL_is_server(s) ? 0 : 1;
     if (shared)
         nsig = SSL_get_shared_sigalgs(s, 0, NULL, NULL, NULL, NULL, NULL);
@@ -296,6 +308,7 @@ static int do_print_sigalgs(BIO *out, SSL *s, int shared)
 int ssl_print_sigalgs(BIO *out, SSL *s)
 {
     int nid;
+
     if (!SSL_is_server(s))
         ssl_print_client_cert_types(out, s);
     do_print_sigalgs(out, s, 0);
@@ -312,6 +325,7 @@ int ssl_print_point_formats(BIO *out, SSL *s)
 {
     int i, nformats;
     const char *pformats;
+
     nformats = SSL_get0_ec_point_formats(s, &pformats);
     if (nformats <= 0)
         return 1;
@@ -386,13 +400,13 @@ int ssl_print_tmp_key(BIO *out, SSL *s)
     if (!SSL_get_peer_tmp_key(s, &key))
         return 1;
     BIO_puts(out, "Server Temp Key: ");
-    switch (EVP_PKEY_id(key)) {
+    switch (EVP_PKEY_get_id(key)) {
     case EVP_PKEY_RSA:
-        BIO_printf(out, "RSA, %d bits\n", EVP_PKEY_bits(key));
+        BIO_printf(out, "RSA, %d bits\n", EVP_PKEY_get_bits(key));
         break;
 
     case EVP_PKEY_DH:
-        BIO_printf(out, "DH, %d bits\n", EVP_PKEY_bits(key));
+        BIO_printf(out, "DH, %d bits\n", EVP_PKEY_get_bits(key));
         break;
 #ifndef OPENSSL_NO_EC
     case EVP_PKEY_EC:
@@ -403,20 +417,20 @@ int ssl_print_tmp_key(BIO *out, SSL *s)
             if (!EVP_PKEY_get_utf8_string_param(key, OSSL_PKEY_PARAM_GROUP_NAME,
                                                 name, sizeof(name), &name_len))
                 strcpy(name, "?");
-            BIO_printf(out, "ECDH, %s, %d bits\n", name, EVP_PKEY_bits(key));
+            BIO_printf(out, "ECDH, %s, %d bits\n", name, EVP_PKEY_get_bits(key));
         }
     break;
 #endif
     default:
-        BIO_printf(out, "%s, %d bits\n", OBJ_nid2sn(EVP_PKEY_id(key)),
-                   EVP_PKEY_bits(key));
+        BIO_printf(out, "%s, %d bits\n", OBJ_nid2sn(EVP_PKEY_get_id(key)),
+                   EVP_PKEY_get_bits(key));
     }
     EVP_PKEY_free(key);
     return 1;
 }
 
-long bio_dump_callback(BIO *bio, int cmd, const char *argp,
-                       int argi, long argl, long ret)
+long bio_dump_callback(BIO *bio, int cmd, const char *argp, size_t len,
+                       int argi, long argl, int ret, size_t *processed)
 {
     BIO *out;
 
@@ -425,14 +439,23 @@ long bio_dump_callback(BIO *bio, int cmd, const char *argp,
         return ret;
 
     if (cmd == (BIO_CB_READ | BIO_CB_RETURN)) {
-        BIO_printf(out, "read from %p [%p] (%lu bytes => %ld (0x%lX))\n",
-                   (void *)bio, (void *)argp, (unsigned long)argi, ret, ret);
-        BIO_dump(out, argp, (int)ret);
-        return ret;
+        if (ret > 0 && processed != NULL) {
+            BIO_printf(out, "read from %p [%p] (%zu bytes => %zu (0x%zX))\n",
+                       (void *)bio, (void *)argp, len, *processed, *processed);
+            BIO_dump(out, argp, (int)*processed);
+        } else {
+            BIO_printf(out, "read from %p [%p] (%zu bytes => %d)\n",
+                       (void *)bio, (void *)argp, len, ret);
+        }
     } else if (cmd == (BIO_CB_WRITE | BIO_CB_RETURN)) {
-        BIO_printf(out, "write to %p [%p] (%lu bytes => %ld (0x%lX))\n",
-                   (void *)bio, (void *)argp, (unsigned long)argi, ret, ret);
-        BIO_dump(out, argp, (int)ret);
+        if (ret > 0 && processed != NULL) {
+            BIO_printf(out, "write to %p [%p] (%zu bytes => %zu (0x%zX))\n",
+                       (void *)bio, (void *)argp, len, *processed, *processed);
+            BIO_dump(out, argp, (int)*processed);
+        } else {
+            BIO_printf(out, "write to %p [%p] (%zu bytes => %d)\n",
+                       (void *)bio, (void *)argp, len, ret);
+        }
     }
     return ret;
 }
@@ -731,8 +754,8 @@ void tlsext_cb(SSL *s, int client_server, int type,
 }
 
 #ifndef OPENSSL_NO_SOCK
-int generate_cookie_callback(SSL *ssl, unsigned char *cookie,
-                             unsigned int *cookie_len)
+int generate_stateless_cookie_callback(SSL *ssl, unsigned char *cookie,
+                                       size_t *cookie_len)
 {
     unsigned char *buffer = NULL;
     size_t length = 0;
@@ -791,16 +814,16 @@ end:
     return res;
 }
 
-int verify_cookie_callback(SSL *ssl, const unsigned char *cookie,
-                           unsigned int cookie_len)
+int verify_stateless_cookie_callback(SSL *ssl, const unsigned char *cookie,
+                                     size_t cookie_len)
 {
     unsigned char result[EVP_MAX_MD_SIZE];
-    unsigned int resultlength;
+    size_t resultlength;
 
     /* Note: we check cookie_initialized because if it's not,
      * it cannot be valid */
     if (cookie_initialized
-        && generate_cookie_callback(ssl, result, &resultlength)
+        && generate_stateless_cookie_callback(ssl, result, &resultlength)
         && cookie_len == resultlength
         && memcmp(result, cookie, resultlength) == 0)
         return 1;
@@ -808,20 +831,21 @@ int verify_cookie_callback(SSL *ssl, const unsigned char *cookie,
     return 0;
 }
 
-int generate_stateless_cookie_callback(SSL *ssl, unsigned char *cookie,
-                                       size_t *cookie_len)
+int generate_cookie_callback(SSL *ssl, unsigned char *cookie,
+                             unsigned int *cookie_len)
 {
-    unsigned int temp = 0;
+    size_t temp = 0;
+    int res = generate_stateless_cookie_callback(ssl, cookie, &temp);
 
-    int res = generate_cookie_callback(ssl, cookie, &temp);
-    *cookie_len = temp;
+    if (res != 0)
+        *cookie_len = (unsigned int)temp;
     return res;
 }
 
-int verify_stateless_cookie_callback(SSL *ssl, const unsigned char *cookie,
-                                     size_t cookie_len)
+int verify_cookie_callback(SSL *ssl, const unsigned char *cookie,
+                           unsigned int cookie_len)
 {
-    return verify_cookie_callback(ssl, cookie, cookie_len);
+    return verify_stateless_cookie_callback(ssl, cookie, cookie_len);
 }
 
 #endif
@@ -885,6 +909,7 @@ static int set_cert_cb(SSL *ssl, void *arg)
     SSL_EXCERT *exc = arg;
 #ifdef CERT_CB_TEST_RETRY
     static int retry_cnt;
+
     if (retry_cnt < 5) {
         retry_cnt++;
         BIO_printf(bio_err,
@@ -973,7 +998,7 @@ void ssl_excert_free(SSL_EXCERT *exc)
     while (exc) {
         X509_free(exc->cert);
         EVP_PKEY_free(exc->key);
-        sk_X509_pop_free(exc->chain, X509_free);
+        OSSL_STACK_OF_X509_free(exc->chain);
         curr = exc;
         exc = exc->next;
         OPENSSL_free(curr);
@@ -983,6 +1008,7 @@ void ssl_excert_free(SSL_EXCERT *exc)
 int load_excert(SSL_EXCERT **pexc)
 {
     SSL_EXCERT *exc = *pexc;
+
     if (exc == NULL)
         return 1;
     /* If nothing in list, free and set to NULL */
@@ -1088,6 +1114,7 @@ static void print_raw_cipherlist(SSL *s)
     const unsigned char *rlist;
     static const unsigned char scsv_id[] = { 0, 0xFF };
     size_t i, rlistlen, num;
+
     if (!SSL_is_server(s))
         return;
     num = SSL_get0_raw_cipherlist(s, NULL);
@@ -1233,12 +1260,10 @@ int config_ctx(SSL_CONF_CTX *cctx, STACK_OF(OPENSSL_STRING) *str,
     for (i = 0; i < sk_OPENSSL_STRING_num(str); i += 2) {
         const char *flag = sk_OPENSSL_STRING_value(str, i);
         const char *arg = sk_OPENSSL_STRING_value(str, i + 1);
+
         if (SSL_CONF_cmd(cctx, flag, arg) <= 0) {
-            if (arg != NULL)
-                BIO_printf(bio_err, "Error with command: \"%s %s\"\n",
-                           flag, arg);
-            else
-                BIO_printf(bio_err, "Error with command: \"%s\"\n", flag);
+            BIO_printf(bio_err, "Call to SSL_CONF_cmd(%s, %s) failed\n",
+                       flag, arg == NULL ? "<NULL>" : arg);
             ERR_print_errors(bio_err);
             return 0;
         }
@@ -1267,6 +1292,7 @@ static int add_crls_store(X509_STORE *st, STACK_OF(X509_CRL) *crls)
 int ssl_ctx_add_crls(SSL_CTX *ctx, STACK_OF(X509_CRL) *crls, int crl_download)
 {
     X509_STORE *st;
+
     st = SSL_CTX_get_cert_store(ctx);
     add_crls_store(st, crls);
     if (crl_download)
@@ -1283,6 +1309,7 @@ int ssl_load_stores(SSL_CTX *ctx,
 {
     X509_STORE *vfy = NULL, *ch = NULL;
     int rv = 0;
+
     if (vfyCApath != NULL || vfyCAfile != NULL || vfyCAstore != NULL) {
         vfy = X509_STORE_new();
         if (vfy == NULL)
@@ -1359,6 +1386,7 @@ static int security_callback_debug(const SSL *s, const SSL_CTX *ctx,
     int rv, show_bits = 1, cert_md = 0;
     const char *nm;
     int show_nm;
+
     rv = sdb->old_cb(s, ctx, op, bits, nid, other, ex);
     if (rv == 1 && sdb->verbose < 2)
         return 1;
@@ -1412,14 +1440,21 @@ static int security_callback_debug(const SSL *s, const SSL_CTX *ctx,
         {
             if (cert_md) {
                 int sig_nid = X509_get_signature_nid(other);
+
                 BIO_puts(sdb->out, OBJ_nid2sn(sig_nid));
             } else {
                 EVP_PKEY *pkey = X509_get0_pubkey(other);
-                const char *algname = "";
-                EVP_PKEY_asn1_get0_info(NULL, NULL, NULL, NULL,
-                                        &algname, EVP_PKEY_get0_asn1(pkey));
-                BIO_printf(sdb->out, "%s, bits=%d",
-                           algname, EVP_PKEY_bits(pkey));
+
+                if (pkey == NULL) {
+                    BIO_printf(sdb->out, "Public key missing");
+                } else {
+                    const char *algname = "";
+
+                    EVP_PKEY_asn1_get0_info(NULL, NULL, NULL, NULL,
+                                            &algname, EVP_PKEY_get0_asn1(pkey));
+                    BIO_printf(sdb->out, "%s, bits=%d",
+                            algname, EVP_PKEY_get_bits(pkey));
+                }
             }
             break;
         }
@@ -1529,9 +1564,32 @@ void print_ca_names(BIO *bio, SSL *s)
         return;
     }
 
-    BIO_printf(bio, "---\nAcceptable %s certificate CA names\n",cs);
+    BIO_printf(bio, "---\nAcceptable %s certificate CA names\n", cs);
     for (i = 0; i < sk_X509_NAME_num(sk); i++) {
         X509_NAME_print_ex(bio, sk_X509_NAME_value(sk, i), 0, get_nameopt());
         BIO_write(bio, "\n", 1);
     }
 }
+
+void ssl_print_secure_renegotiation_notes(BIO *bio, SSL *s)
+{
+    if (SSL_VERSION_ALLOWS_RENEGOTIATION(s)) {
+        BIO_printf(bio, "Secure Renegotiation IS%s supported\n",
+                   SSL_get_secure_renegotiation_support(s) ? "" : " NOT");
+    } else {
+        BIO_printf(bio, "This TLS version forbids renegotiation.\n");
+    }
+}
+
+int progress_cb(EVP_PKEY_CTX *ctx)
+{
+    BIO *b = EVP_PKEY_CTX_get_app_data(ctx);
+    int p = EVP_PKEY_CTX_get_keygen_info(ctx, 0);
+    static const char symbols[] = ".+*\n";
+    char c = (p >= 0 && (size_t)p <= sizeof(symbols) - 1) ? symbols[p] : '?';
+
+    BIO_write(b, &c, 1);
+    (void)BIO_flush(b);
+    return 1;
+}
+

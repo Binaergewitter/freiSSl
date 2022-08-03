@@ -102,11 +102,11 @@ extern "C" {
 # endif
 
 /* ------------------------------- OpenVMS -------------------------------- */
-# if defined(__VMS) || defined(VMS) || defined(OPENSSL_SYS_VMS)
+# if defined(__VMS) || defined(VMS)
 #  if !defined(OPENSSL_SYS_VMS)
 #   undef OPENSSL_SYS_UNIX
+#   define OPENSSL_SYS_VMS
 #  endif
-#  define OPENSSL_SYS_VMS
 #  if defined(__DECC)
 #   define OPENSSL_SYS_VMS_DECC
 #  elif defined(__DECCXX)
@@ -210,7 +210,7 @@ extern "C" {
 #  endif
 # endif
 
-# ifdef DEBUG_UNUSED
+# if defined(UNUSEDRESULT_DEBUG)
 #  define __owur __attribute__((__warn_unused_result__))
 # else
 #  define __owur
@@ -248,9 +248,21 @@ typedef int int32_t;
 typedef unsigned int uint32_t;
 typedef __int64 int64_t;
 typedef unsigned __int64 uint64_t;
+# elif defined(OPENSSL_SYS_TANDEM)
+#  include <stdint.h>
+#  include <sys/types.h>
 # else
 #  include <stdint.h>
 #  undef OPENSSL_NO_STDINT_H
+# endif
+# if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L && \
+    defined(INTMAX_MAX) && defined(UINTMAX_MAX)
+typedef intmax_t ossl_intmax_t;
+typedef uintmax_t ossl_uintmax_t;
+# else
+/* Fall back to the largest we know we require and can handle */
+typedef int64_t ossl_intmax_t;
+typedef uint64_t ossl_uintmax_t;
 # endif
 
 /* ossl_inline: portable inline definition usable in public headers */

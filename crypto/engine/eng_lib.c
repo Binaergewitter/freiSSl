@@ -1,5 +1,5 @@
 /*
- * Copyright 2001-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2001-2022 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -7,7 +7,7 @@
  * https://www.openssl.org/source/license.html
  */
 
-#include "e_os.h"
+#include "internal/e_os.h"
 #include "eng_local.h"
 #include <openssl/rand.h>
 #include "internal/refcount.h"
@@ -34,7 +34,7 @@ ENGINE *ENGINE_new(void)
         return NULL;
     }
     ret->struct_ref = 1;
-    engine_ref_debug(ret, 0, 1);
+    ENGINE_REF_PRINT(ret, 0, 1);
     if (!CRYPTO_new_ex_data(CRYPTO_EX_INDEX_ENGINE, ret, &ret->ex_data)) {
         OPENSSL_free(ret);
         return NULL;
@@ -65,6 +65,7 @@ void engine_set_all_null(ENGINE *e)
     e->load_pubkey = NULL;
     e->cmd_defns = NULL;
     e->flags = 0;
+    e->dynamic_id = NULL;
 }
 
 int engine_free_util(ENGINE *e, int not_locked)
@@ -77,7 +78,7 @@ int engine_free_util(ENGINE *e, int not_locked)
         CRYPTO_DOWN_REF(&e->struct_ref, &i, global_engine_lock);
     else
         i = --e->struct_ref;
-    engine_ref_debug(e, 0, -1);
+    ENGINE_REF_PRINT(e, 0, -1);
     if (i > 0)
         return 1;
     REF_ASSERT_ISNT(i < 0);
@@ -90,6 +91,7 @@ int engine_free_util(ENGINE *e, int not_locked)
      */
     if (e->destroy)
         e->destroy(e);
+    engine_remove_dynamic_id(e, not_locked);
     CRYPTO_free_ex_data(CRYPTO_EX_INDEX_ENGINE, e, &e->ex_data);
     OPENSSL_free(e);
     return 1;

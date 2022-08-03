@@ -1,5 +1,5 @@
 /*
- * Copyright 2008-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2008-2022 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -240,6 +240,43 @@ CMS_ContentInfo *CMS_EnvelopedData_create_ex(const EVP_CIPHER *cipher,
 CMS_ContentInfo *CMS_EnvelopedData_create(const EVP_CIPHER *cipher)
 {
     return CMS_EnvelopedData_create_ex(cipher, NULL, NULL);
+}
+
+BIO *CMS_EnvelopedData_decrypt(CMS_EnvelopedData *env, BIO *detached_data,
+                               EVP_PKEY *pkey, X509 *cert,
+                               ASN1_OCTET_STRING *secret, unsigned int flags,
+                               OSSL_LIB_CTX *libctx, const char *propq)
+{
+    CMS_ContentInfo *ci;
+    BIO *bio = NULL;
+    int res = 0;
+
+    if (env == NULL) {
+        ERR_raise(ERR_LIB_CMS, ERR_R_PASSED_NULL_PARAMETER);
+        return NULL;
+    }
+
+    if ((ci = CMS_ContentInfo_new_ex(libctx, propq)) == NULL
+            || (bio = BIO_new(BIO_s_mem())) == NULL)
+        goto end;
+    ci->contentType = OBJ_nid2obj(NID_pkcs7_enveloped);
+    ci->d.envelopedData = env;
+    if (secret != NULL
+        && CMS_decrypt_set1_password(ci, (unsigned char *)
+                                     ASN1_STRING_get0_data(secret),
+                                     ASN1_STRING_length(secret)) != 1)
+        goto end;
+    res = CMS_decrypt(ci, pkey, cert, detached_data, bio, flags);
+
+ end:
+    if (ci != NULL)
+        ci->d.envelopedData = NULL; /* do not indirectly free |env| */
+    CMS_ContentInfo_free(ci);
+    if (!res) {
+        BIO_free(bio);
+        bio = NULL;
+    }
+    return bio;
 }
 
 CMS_ContentInfo *
@@ -557,7 +594,7 @@ static int cms_RecipientInfo_ktri_decrypt(CMS_ContentInfo *cms,
         }
         (void)ERR_pop_to_mark();
 
-        fixlen = EVP_CIPHER_key_length(cipher);
+        fixlen = EVP_CIPHER_get_key_length(cipher);
         EVP_CIPHER_free(fetched_cipher);
     }
 
@@ -730,8 +767,8 @@ CMS_RecipientInfo *CMS_add0_recipient_key(CMS_ContentInfo *cms, int nid,
         kekri->kekid->other->keyAttr = otherType;
     }
 
-    X509_ALGOR_set0(kekri->keyEncryptionAlgorithm,
-                    OBJ_nid2obj(nid), V_ASN1_UNDEF, NULL);
+    (void)X509_ALGOR_set0(kekri->keyEncryptionAlgorithm, OBJ_nid2obj(nid),
+                          V_ASN1_UNDEF, NULL); /* cannot fail */
 
     return ri;
 
@@ -795,7 +832,7 @@ static EVP_CIPHER *cms_get_key_wrap_cipher(size_t keylen, const CMS_CTX *ctx)
 {
     const char *alg = NULL;
 
-    switch(keylen) {
+    switch (keylen) {
     case 16:
         alg = "AES-128-WRAP";
         break;
@@ -951,6 +988,7 @@ static int cms_RecipientInfo_kekri_decrypt(CMS_ContentInfo *cms,
     }
     ukeylen += outlen;
 
+    OPENSSL_clear_free(ec->key, ec->keylen);
     ec->key = ukey;
     ec->keylen = ukeylen;
 
@@ -1108,7 +1146,7 @@ static BIO *cms_EnvelopedData_Decryption_init_bio(CMS_ContentInfo *cms)
      * If the selected cipher supports unprotected attributes,
      * deal with it using special ctrl function
      */
-    if ((EVP_CIPHER_flags(EVP_CIPHER_CTX_get0_cipher(ctx))
+    if ((EVP_CIPHER_get_flags(EVP_CIPHER_CTX_get0_cipher(ctx))
                 & EVP_CIPH_FLAG_CIPHER_WITH_MAC) != 0
          && EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_PROCESS_UNPROTECTED, 0,
                                 cms->d.envelopedData->unprotectedAttrs) <= 0) {
@@ -1228,7 +1266,7 @@ int ossl_cms_EnvelopedData_final(CMS_ContentInfo *cms, BIO *chain)
      * If the selected cipher supports unprotected attributes,
      * deal with it using special ctrl function
      */
-    if ((EVP_CIPHER_flags(EVP_CIPHER_CTX_get0_cipher(ctx))
+    if ((EVP_CIPHER_get_flags(EVP_CIPHER_CTX_get0_cipher(ctx))
             & EVP_CIPH_FLAG_CIPHER_WITH_MAC) != 0) {
         if (env->unprotectedAttrs == NULL)
             env->unprotectedAttrs = sk_X509_ATTRIBUTE_new_null();
@@ -1261,10 +1299,10 @@ int ossl_cms_AuthEnvelopedData_final(CMS_ContentInfo *cms, BIO *cmsbio)
      * The tag is set only for encryption. There is nothing to do for
      * decryption.
      */
-    if (!EVP_CIPHER_CTX_encrypting(ctx))
+    if (!EVP_CIPHER_CTX_is_encrypting(ctx))
         return 1;
 
-    taglen = EVP_CIPHER_CTX_tag_length(ctx);
+    taglen = EVP_CIPHER_CTX_get_tag_length(ctx);
     if (taglen <= 0
             || (tag = OPENSSL_malloc(taglen)) == NULL
             || EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, taglen,

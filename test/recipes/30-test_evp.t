@@ -28,6 +28,7 @@ my $no_dsa = disabled("dsa");
 my $no_ec = disabled("ec");
 my $no_gost = disabled("gost");
 my $no_sm2 = disabled("sm2");
+my $no_siv = disabled("siv");
 
 # Default config depends on if the legacy module is built or not
 my $defaultcnf = $no_legacy ? 'default.cnf' : 'default-and-legacy.cnf';
@@ -42,12 +43,16 @@ my @files = qw(
                 evpciph_aes_common.txt
                 evpciph_aes_cts.txt
                 evpciph_aes_wrap.txt
+                evpciph_aes_stitched.txt
                 evpciph_des3_common.txt
                 evpkdf_hkdf.txt
+                evpkdf_kbkdf_counter.txt
+                evpkdf_pbkdf1.txt
                 evpkdf_pbkdf2.txt
                 evpkdf_ss.txt
                 evpkdf_ssh.txt
                 evpkdf_tls12_prf.txt
+                evpkdf_tls13_kdf.txt
                 evpkdf_x942.txt
                 evpkdf_x963.txt
                 evpmac_common.txt
@@ -79,16 +84,17 @@ push @files, qw(
 # (i.e. The algorithms are not present in the fips provider)
 my @defltfiles = qw(
                      evpciph_aes_ocb.txt
-                     evpciph_aes_siv.txt
                      evpciph_aria.txt 
                      evpciph_bf.txt
                      evpciph_camellia.txt
+                     evpciph_camellia_cts.txt
                      evpciph_cast5.txt
                      evpciph_chacha.txt
                      evpciph_des.txt
                      evpciph_idea.txt
                      evpciph_rc2.txt
                      evpciph_rc4.txt
+                     evpciph_rc4_stitched.txt
                      evpciph_rc5.txt
                      evpciph_seed.txt
                      evpciph_sm4.txt
@@ -99,6 +105,7 @@ my @defltfiles = qw(
                      evpmac_blake.txt
                      evpmac_poly1305.txt
                      evpmac_siphash.txt
+                     evpmac_sm3.txt
                      evpmd_blake.txt
                      evpmd_md.txt
                      evpmd_mdc2.txt
@@ -113,6 +120,8 @@ my @defltfiles = qw(
                     );
 push @defltfiles, qw(evppkey_brainpool.txt) unless $no_ec;
 push @defltfiles, qw(evppkey_sm2.txt) unless $no_sm2;
+push @defltfiles, qw(evpciph_aes_gcm_siv.txt) unless $no_siv;
+push @defltfiles, qw(evpciph_aes_siv.txt) unless $no_siv;
 
 plan tests =>
     + (scalar(@configs) * scalar(@files))

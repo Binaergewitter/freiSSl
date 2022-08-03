@@ -11,6 +11,7 @@
 # define OSSL_TESTUTIL_H
 
 # include <stdarg.h>
+# include "internal/common.h" /* for HAS_PREFIX */
 
 # include <openssl/provider.h>
 # include <openssl/err.h>
@@ -206,6 +207,13 @@ size_t test_get_argument_count(void);
  */
 int test_skip_common_options(void);
 
+/*
+ * Get a library context for the tests, populated with the specified provider
+ * and configuration. If default_null_prov is not NULL, a "null" provider is
+ * loaded into the default library context to prevent it being used.
+ * If libctx is NULL, the specified provider is loaded into the default library
+ * context.
+ */
 int test_get_libctx(OSSL_LIB_CTX **libctx, OSSL_PROVIDER **default_null_prov,
                     const char *config_file,
                     OSSL_PROVIDER **provider, const char *module_name);
@@ -274,6 +282,8 @@ DECLARE_COMPARISONS(char, char)
 DECLARE_COMPARISONS(unsigned char, uchar)
 DECLARE_COMPARISONS(long, long)
 DECLARE_COMPARISONS(unsigned long, ulong)
+DECLARE_COMPARISONS(int64_t, int64_t)
+DECLARE_COMPARISONS(uint64_t, uint64_t)
 DECLARE_COMPARISONS(double, double)
 DECLARE_COMPARISONS(time_t, time_t)
 
@@ -422,6 +432,13 @@ void test_perror(const char *s);
 # define TEST_ulong_le(a, b)  test_ulong_le(__FILE__, __LINE__, #a, #b, a, b)
 # define TEST_ulong_gt(a, b)  test_ulong_gt(__FILE__, __LINE__, #a, #b, a, b)
 # define TEST_ulong_ge(a, b)  test_ulong_ge(__FILE__, __LINE__, #a, #b, a, b)
+
+# define TEST_uint64_t_eq(a, b)  test_uint64_t_eq(__FILE__, __LINE__, #a, #b, a, b)
+# define TEST_uint64_t_ne(a, b)  test_uint64_t_ne(__FILE__, __LINE__, #a, #b, a, b)
+# define TEST_uint64_t_lt(a, b)  test_uint64_t_lt(__FILE__, __LINE__, #a, #b, a, b)
+# define TEST_uint64_t_le(a, b)  test_uint64_t_le(__FILE__, __LINE__, #a, #b, a, b)
+# define TEST_uint64_t_gt(a, b)  test_uint64_t_gt(__FILE__, __LINE__, #a, #b, a, b)
+# define TEST_uint64_t_ge(a, b)  test_uint64_t_ge(__FILE__, __LINE__, #a, #b, a, b)
 
 # define TEST_size_t_eq(a, b) test_size_t_eq(__FILE__, __LINE__, #a, #b, a, b)
 # define TEST_size_t_ne(a, b) test_size_t_ne(__FILE__, __LINE__, #a, #b, a, b)
@@ -585,6 +602,6 @@ EVP_PKEY *load_pkey_pem(const char *file, OSSL_LIB_CTX *libctx);
 X509 *load_cert_pem(const char *file, OSSL_LIB_CTX *libctx);
 X509 *load_cert_der(const unsigned char *bytes, int len);
 STACK_OF(X509) *load_certs_pem(const char *file);
-X509_REQ *load_csr_der(const char *file);
+X509_REQ *load_csr_der(const char *file, OSSL_LIB_CTX *libctx);
 
 #endif                          /* OSSL_TESTUTIL_H */

@@ -1,5 +1,5 @@
 #! /usr/bin/env perl
-# Copyright 1998-2021 The OpenSSL Project Authors. All Rights Reserved.
+# Copyright 1998-2022 The OpenSSL Project Authors. All Rights Reserved.
 #
 # Licensed under the Apache License 2.0 (the "License").  You may not use
 # this file except in compliance with the License.  You can obtain a copy
@@ -22,8 +22,8 @@ use Carp;
 # These control our behavior.
 my $DRYRUN;
 my $VERBOSE;
-my $WAIT = 1;
 my $WHERE = dirname($0);
+my $WAIT = 1;
 
 # Machine type, etc., used to determine the platform
 my $MACHINE;
@@ -197,13 +197,15 @@ sub is_sco_uname {
 
     open UNAME, "uname -X 2>/dev/null|" or return '';
     my $line = "";
+    my $os = "";
     while ( <UNAME> ) {
         chop;
         $line = $_ if m@^Release@;
+        $os = $_ if m@^System@;
     }
     close UNAME;
 
-    return undef if $line eq '';
+    return undef if $line eq '' or $os eq 'System = SunOS';
 
     my @fields = split(/\s+/, $line);
     return $fields[2];
@@ -238,7 +240,7 @@ sub get_sco_type {
 sub guess_system {
     ($SYSTEM, undef, $RELEASE, $VERSION, $MACHINE) = POSIX::uname();
     my $sys = "${SYSTEM}:${RELEASE}:${VERSION}:${MACHINE}";
-
+    
     # Special-cases for ISC, SCO, Unixware
     my $REL = is_sco_uname();
     if ( defined $REL ) {
@@ -360,29 +362,20 @@ sub determine_compiler_settings {
         }
 
         if ( $SYSTEM eq "SunOS" ) {
-            # check for WorkShop C, expected output is "cc: blah-blah C x.x"
+            # check for Oracle Developer Studio, expected output is "cc: blah-blah C x.x blah-blah"
             my $v = `(cc -V 2>&1) 2>/dev/null | egrep -e '^cc: .* C [0-9]\.[0-9]'`;
-            chomp $v;
-            $v =~ s/.* C \([0-9]\)\.\([0-9]\).*/$1.$2/;
-            my @numbers = split /\./, $v;
+            my @numbers = 
+                    ( $v =~ m/^.* C ([0-9]+)\.([0-9]+) .*/ );
             my @factors = (100, 1);
             $v = 0;
             while (@numbers && @factors) {
                 $v += shift(@numbers) * shift(@factors)
             }
 
-            if ( $v > 40000 &&  $MACHINE ne 'i86pc' ) {
+            if ($v > 500) {
                 $CC = 'cc';
-                $CCVENDOR = ''; # Determine later
+                $CCVENDOR = 'sun';
                 $CCVER = $v;
-
-                if ( $CCVER == 50000 ) {
-                    print <<'EOF';
-WARNING! Found WorkShop C 5.0.
-         Make sure you have patch #107357-01 or later applied.
-EOF
-                    maybe_abort();
-                }
             }
         }
     }
@@ -459,7 +452,7 @@ EOF
       [ 'ppc-apple-rhapsody',     { target => "rhapsody-ppc" } ],
       [ 'ppc-apple-darwin.*',
         sub {
-            my $KERNEL_BITS = $ENV{KERNEL_BITS};
+            my $KERNEL_BITS = $ENV{KERNEL_BITS} // '';
             my $ISA64 = `sysctl -n hw.optional.64bitops 2>/dev/null`;
             if ( $ISA64 == 1 && $KERNEL_BITS eq '' ) {
                 print <<EOF;
@@ -475,12 +468,12 @@ EOF
       ],
       [ 'i.86-apple-darwin.*',
         sub {
-            my $KERNEL_BITS = $ENV{KERNEL_BITS};
+            my $KERNEL_BITS = $ENV{KERNEL_BITS} // '';
             my $ISA64 = `sysctl -n hw.optional.x86_64 2>/dev/null`;
             if ( $ISA64 == 1 && $KERNEL_BITS eq '' ) {
                 print <<EOF;
 WARNING! To build 64-bit package, do this:
-         KERNEL_BITS=64 $WHERE/Configure \[\[ options \]\]
+         KERNEL_BITS=64 $WHERE/Configure [options...]
 EOF
                 maybe_abort();
             }
@@ -491,12 +484,20 @@ EOF
       ],
       [ 'x86_64-apple-darwin.*',
         sub {
-            my $KERNEL_BITS = $ENV{KERNEL_BITS};
+            my $KERNEL_BITS = $ENV{KERNEL_BITS} // '';
+            # macOS >= 10.15 is 64-bit only
+            my $SW_VERS = `sw_vers -productVersion 2>/dev/null`;
+            if ($SW_VERS =~ /^(\d+)\.(\d+)\.(\d+)$/) {
+                if ($1 > 10 || ($1 == 10 && $2 >= 15)) {
+                    die "32-bit applications not supported on macOS 10.15 or later\n" if $KERNEL_BITS eq '32';
+                    return { target => "darwin64-x86_64" };
+                }
+            }
             return { target => "darwin-i386" } if $KERNEL_BITS eq '32';
 
             print <<EOF;
 WARNING! To build 32-bit package, do this:
-         KERNEL_BITS=32 $WHERE/Configure \[\[ options \]\]
+         KERNEL_BITS=32 $WHERE/Configure [options...]
 EOF
             maybe_abort();
             return { target => "darwin64-x86_64" };
@@ -539,7 +540,7 @@ EOF
       ],
       [ 'ppc64-.*-linux2',
         sub {
-            my $KERNEL_BITS = $ENV{KERNEL_BITS};
+            my $KERNEL_BITS = $ENV{KERNEL_BITS} // '';
             if ( $KERNEL_BITS eq '' ) {
                 print <<EOF;
 WARNING! To build 64-bit package, do this:
@@ -685,11 +686,12 @@ EOF
         sub {
             my $KERNEL_BITS = $ENV{KERNEL_BITS};
             my $ISA64 = `isainfo 2>/dev/null | grep sparcv9`;
-            if ( $ISA64 ne "" && $KERNEL_BITS eq '' ) {
+            my $KB = $KERNEL_BITS // '64';
+            if ( $ISA64 ne "" && $KB eq '64' ) {
                 if ( $CCVENDOR eq "sun" && $CCVER >= 500 ) {
                     print <<EOF;
-WARNING! To build 64-bit package, do this:
-         $WHERE/Configure solaris64-sparcv9-cc
+WARNING! To build 32-bit package, do this:
+         $WHERE/Configure solaris-sparcv9-cc
 EOF
                     maybe_abort();
                 } elsif ( $CCVENDOR eq "gnu" && $GCC_ARCH eq "-m64" ) {
@@ -702,7 +704,7 @@ WARNING! To build 32-bit package, do this:
          $WHERE/Configure solaris-sparcv9-gcc
 EOF
                     maybe_abort();
-                    return { target => "solaris64-sparcv9" };
+                    return { target => "solaris64-sparcv9-gcc" };
                 } elsif ( $GCC_ARCH eq "-m32" ) {
                     print <<EOF;
 NOTICE! If you *know* that your GNU C supports 64-bit/V9 ABI and you wish
@@ -712,9 +714,9 @@ EOF
                     maybe_abort();
                 }
             }
-            return { target => "solaris64-sparcv9" }
-                if $ISA64 ne "" && $KERNEL_BITS eq '64';
-            return { target => "solaris-sparcv9" };
+            return { target => "solaris64-sparcv9-cc" }
+                if $ISA64 ne "" && $KB eq '64';
+            return { target => "solaris-sparcv9-cc" };
         }
       ],
       [ 'sun4m-.*-solaris2',      { target => "solaris-sparcv8" } ],
@@ -745,12 +747,15 @@ EOF
                                     disable => [ 'sse2' ] } ],
       [ 'alpha.*-.*-.*bsd.*',     { target => "BSD-generic64",
                                     defines => [ 'L_ENDIAN' ] } ],
-      [ 'powerpc64-.*-.*bsd.*',   { target => "BSD-generic64",
-                                    defines => [ 'B_ENDIAN' ] } ],
+      [ 'powerpc-.*-.*bsd.*',     { target => "BSD-ppc" } ],
+      [ 'powerpc64-.*-.*bsd.*',   { target => "BSD-ppc64" } ],
+      [ 'powerpc64le-.*-.*bsd.*', { target => "BSD-ppc64le" } ],
+      [ 'riscv64-.*-.*bsd.*',     { target => "BSD-riscv64" } ],
       [ 'sparc64-.*-.*bsd.*',     { target => "BSD-sparc64" } ],
       [ 'ia64-.*-.*bsd.*',        { target => "BSD-ia64" } ],
       [ 'x86_64-.*-dragonfly.*',  { target => "BSD-x86_64" } ],
       [ 'amd64-.*-.*bsd.*',       { target => "BSD-x86_64" } ],
+      [ 'arm64-.*-.*bsd.*',       { target => "BSD-aarch64" } ],
       [ '.*86.*-.*-.*bsd.*',
         sub {
             # mimic ld behaviour when it's looking for libc...
@@ -865,7 +870,7 @@ EOF
                 }
             }
             if ( okrun(
-                       "lsattr -E -O -l `lsdev -c processor|awk '{print \$1;exit}'`",
+                       "(lsattr -E -O -l `lsdev -c processor|awk '{print \$1;exit}'`",
                        'grep -i powerpc) >/dev/null 2>&1') ) {
                 # this applies even to Power3 and later, as they return
                 # PowerPC_POWER[345]

@@ -13,8 +13,6 @@ implemented in OpenSSL's default and FIPS providers.  These implementations
 support the associated key, containing the public key I<pub> and the
 private key I<priv>.
 
-In the FIPS provider they are non-approved algorithms and do not have the
-"fips=yes" property set.
 No additional parameters can be set during key generation.
 
 
@@ -98,7 +96,7 @@ L<EVP_SIGNATURE-ED25519(7)>, L<EVP_SIGNATURE-ED448(7)>
 
 =head1 COPYRIGHT
 
-Copyright 2020 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2020-2021 The OpenSSL Project Authors. All Rights Reserved.
 
 Licensed under the Apache License 2.0 (the "License").  You may not use
 this file except in compliance with the License.  You can obtain a copy

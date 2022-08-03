@@ -331,7 +331,7 @@ static int send_record(BIO *rbio, unsigned char type, uint64_t seqnr,
     } while (len % 16);
 
     /* Generate IV, and encrypt */
-    if (!TEST_true(RAND_bytes(iv, sizeof(iv)))
+    if (!TEST_int_gt(RAND_bytes(iv, sizeof(iv)), 0)
             || !TEST_ptr(enc_ctx = EVP_CIPHER_CTX_new())
             || !TEST_true(EVP_CipherInit_ex(enc_ctx, EVP_aes_128_cbc(), NULL,
                                             enc_key, iv, 1))
@@ -382,7 +382,7 @@ static int send_finished(SSL *s, BIO *rbio)
         return 0;
 
     do_PRF(TLS_MD_SERVER_FINISH_CONST, TLS_MD_SERVER_FINISH_CONST_SIZE,
-           handshake_hash, EVP_MD_CTX_size(handshake_md),
+           handshake_hash, EVP_MD_CTX_get_size(handshake_md),
            NULL, 0,
            finished_msg + DTLS1_HM_HEADER_LENGTH, TLS1_FINISH_MAC_LENGTH);
 
@@ -499,6 +499,7 @@ static int test_bad_dtls(void)
             || !TEST_true(SSL_CTX_set_cipher_list(ctx, "AES128-SHA")))
         goto end;
 
+    SSL_CTX_set_security_level(ctx, 0);
     con = SSL_new(ctx);
     if (!TEST_ptr(con)
             || !TEST_true(SSL_set_session(con, sess)))

@@ -1,5 +1,5 @@
 /*
- * Copyright 2008-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2008-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -425,7 +425,7 @@ static int capi_init(ENGINE *e)
         /* Setup RSA_METHOD */
         rsa_capi_idx = RSA_get_ex_new_index(0, NULL, NULL, NULL, 0);
         ossl_rsa_meth = RSA_PKCS1_OpenSSL();
-        if (   !RSA_meth_set_pub_enc(capi_rsa_method,
+        if (!RSA_meth_set_pub_enc(capi_rsa_method,
                                      RSA_meth_get_pub_enc(ossl_rsa_meth))
             || !RSA_meth_set_pub_dec(capi_rsa_method,
                                      RSA_meth_get_pub_dec(ossl_rsa_meth))
@@ -444,7 +444,7 @@ static int capi_init(ENGINE *e)
         /* Setup DSA Method */
         dsa_capi_idx = DSA_get_ex_new_index(0, NULL, NULL, NULL, 0);
         ossl_dsa_meth = DSA_OpenSSL();
-        if (   !DSA_meth_set_sign(capi_dsa_method, capi_dsa_do_sign)
+        if (!DSA_meth_set_sign(capi_dsa_method, capi_dsa_do_sign)
             || !DSA_meth_set_verify(capi_dsa_method,
                                     DSA_meth_get_verify(ossl_dsa_meth))
             || !DSA_meth_set_finish(capi_dsa_method, capi_dsa_free)
@@ -1120,10 +1120,19 @@ static char *wide_to_asc(LPCWSTR wstr)
 {
     char *str;
     int len_0, sz;
+    size_t len_1;
 
     if (!wstr)
         return NULL;
-    len_0 = (int)wcslen(wstr) + 1; /* WideCharToMultiByte expects int */
+
+    len_1 = wcslen(wstr) + 1;
+
+    if (len_1 > INT_MAX) {
+	    CAPIerr(CAPI_F_WIDE_TO_ASC, CAPI_R_FUNCTION_NOT_SUPPORTED);
+	    return NULL;
+    }
+
+    len_0 = (int)len_1; /* WideCharToMultiByte expects int */
     sz = WideCharToMultiByte(CP_ACP, 0, wstr, len_0, NULL, 0, NULL, NULL);
     if (!sz) {
         CAPIerr(CAPI_F_WIDE_TO_ASC, CAPI_R_WIN32_ERROR);

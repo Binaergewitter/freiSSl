@@ -120,21 +120,11 @@ represents one of the four commands
 Arguments
 ---------
 
-**Mandatory arguments** are enclosed in double curly braces.
-A simple example would be
+**Optional Arguments** are enclosed in square brackets.
 
-    $ type {{ filename }}
+    [option...]
 
-which is to be understood to use the command `type` on some file name
-determined by the user.
-
-**Optional Arguments** are enclosed in double square brackets.
-
-    [[ options ]]
-
-Note that the notation assumes spaces around `{`, `}`, `[`, `]`, `{{`, `}}` and
-`[[`, `]]`.  This is to differentiate from OpenVMS directory
-specifications, which also use [ and ], but without spaces.
+A trailing ellipsis means that more than one could be specified.
 
 Quick Installation Guide
 ========================
@@ -296,7 +286,7 @@ API Level
 Build the OpenSSL libraries to support the API for the specified version.
 If [no-deprecated](#no-deprecated) is also given, don't build with support
 for deprecated APIs in or below the specified version number.  For example,
-addding
+adding
 
     --api=1.1.0 no-deprecated
 
@@ -350,9 +340,13 @@ Directories
 
 The name of the directory under the top of the installation directory tree
 (see the `--prefix` option) where libraries will be installed.  By default
-this is `lib/`. Note that on Windows only static libraries (`*.lib`) will
+this is `lib`. Note that on Windows only static libraries (`*.lib`) will
 be stored in this location. Shared libraries (`*.dll`) will always be
-installed to the `bin/` directory.
+installed to the `bin` directory.
+
+Some build targets have a multilib postfix set in the build configuration.
+For these targets the default libdir is `lib<multilib-postfix>`. Please use
+`--libdir=lib` to override the libdir if adding the postfix is undesirable.
 
 ### openssldir
 
@@ -452,7 +446,8 @@ This source is ignored by the FIPS provider.
 
 ### rdcpu
 
-Use the `RDSEED` or `RDRAND` command if provided by the CPU.
+Use the `RDSEED` or `RDRAND` command on x86 or `RNDRRS` command on aarch64
+if provided by the CPU.
 
 ### librandom
 
@@ -577,6 +572,18 @@ Enabling this option demands extra care.  For any compiler flag given directly
 as configuration option, you must ensure that it's valid for both the C and
 the C++ compiler.  If not, the C++ build test will most likely break.  As an
 alternative, you can use the language specific variables, `CFLAGS` and `CXXFLAGS`.
+
+### --banner=text
+
+Use the specified text instead of the default banner at the end of
+configuration.
+
+### --w
+
+On platforms where the choice of 32-bit or 64-bit architecture
+is not explicitly specified, `Configure` will print a warning
+message and wait for a few seconds to let you interrupt the
+configuration. Using this flag skips the wait.
 
 ### no-bulk
 
@@ -845,11 +852,14 @@ disengage SSE2 code paths upon application start-up, but if you aim for wider
 "audience" running such kernel, consider `no-sse2`.  Both the `386` and `no-asm`
 options imply `no-sse2`.
 
-### enable-ssl-trace
+### no-ssl-trace
 
-Build with the SSL Trace capabilities.
+Don't build with SSL Trace capabilities.
 
-This adds the `-trace` option to `s_client` and `s_server`.
+This removes the `-trace` option from `s_client` and `s_server`, and omits the
+`SSL_trace()` function from libssl.
+
+Disabling `ssl-trace` may provide a small reduction in libssl binary size.
 
 ### no-static-engine
 
@@ -867,6 +877,15 @@ tests also use the command line applications, the tests will also be skipped.
 ### no-tests
 
 Don't build test programs or run any tests.
+
+### enable-tfo
+
+Build with support for TCP Fast Open (RFC7413). Supported on Linux, macOS and FreeBSD.
+
+### enable-quic
+
+Build with QUIC support. This is currently just for developers as the
+implementation is by no means complete and usable.
 
 ### no-threads
 
@@ -955,7 +974,7 @@ the individual protocol versions.
 
 ### no-{protocol}-method
 
-    no-{ssl|ssl3|tls|tls1|tls1_1|tls1_2|tls1_3|dtls|dtls1|dtls1_2}-method
+    no-{ssl3|tls1|tls1_1|tls1_2|dtls1|dtls1_2}-method
 
 Analogous to `no-{protocol}` but in addition do not build the methods for
 applications to explicitly select individual protocol versions.  Note that there
@@ -1130,23 +1149,21 @@ Configure OpenSSL
 
 ### Automatic Configuration
 
-On some platform a `config` script is available which attempts to guess
-your operating system (and compiler, if necessary) and calls the `Configure`
-Perl script with appropriate target based on its guess.  Further options can
-be supplied to the `config` script, which will be passed on to the `Configure`
-script.
+In previous version, the `config` script determined the platform type and
+compiler and then called `Configure`. Starting with this release, they are
+the same.
 
 #### Unix / Linux / macOS
 
-    $ ./Configure [[ options ]]
+    $ ./Configure [options...]
 
 #### OpenVMS
 
-    $ perl Configure [[ options ]]
+    $ perl Configure [options...]
 
 #### Windows
 
-    $ perl Configure [[ options ]]
+    $ perl Configure [options...]
 
 ### Manual Configuration
 
@@ -1168,12 +1185,13 @@ When you have identified your system (and if necessary compiler) use this
 name as the argument to `Configure`.  For example, a `linux-elf` user would
 run:
 
-    $ ./Configure linux-elf [[ options ]]
+    $ ./Configure linux-elf [options...]
 
 ### Creating your own Configuration
 
 If your system isn't listed, you will have to create a configuration
-file named `Configurations/{{ something }}.conf` and add the correct
+file named `Configurations/YOURFILENAME.conf` (replace `YOURFILENAME`
+with a filename of your choosing) and add the correct
 configuration for your system.  See the available configs as examples
 and read [Configurations/README.md](Configurations/README.md) and
 [Configurations/README-design.md](Configurations/README-design.md)
@@ -1197,21 +1215,21 @@ directory and invoking the configuration commands from there.
 
     $ mkdir /var/tmp/openssl-build
     $ cd /var/tmp/openssl-build
-    $ /PATH/TO/OPENSSL/SOURCE/Configure [[ options ]]
+    $ /PATH/TO/OPENSSL/SOURCE/Configure [options...]
 
 #### OpenVMS example
 
     $ set default sys$login:
     $ create/dir [.tmp.openssl-build]
     $ set default [.tmp.openssl-build]
-    $ perl D:[PATH.TO.OPENSSL.SOURCE]Configure [[ options ]]
+    $ perl D:[PATH.TO.OPENSSL.SOURCE]Configure [options...]
 
 #### Windows example
 
     $ C:
     $ mkdir \temp-openssl
     $ cd \temp-openssl
-    $ perl d:\PATH\TO\OPENSSL\SOURCE\Configure [[ options ]]
+    $ perl d:\PATH\TO\OPENSSL\SOURCE\Configure [options...]
 
 Paths can be relative just as well as absolute.  `Configure` will do its best
 to translate them to relative paths whenever possible.
@@ -1399,6 +1417,18 @@ over the build process.  Typically these should be defined prior to running
                    "--cross-compile-prefix" Configure flag described above. If both
                    are set then the Configure flag takes precedence.
 
+    HASHBANGPERL
+                   The command string for the Perl executable to insert in the
+                   #! line of perl scripts that will be publicly installed.
+                   Default: /usr/bin/env perl
+                   Note: the value of this variable is added to the same scripts
+                   on all platforms, but it's only relevant on Unix-like platforms.
+
+    KERNEL_BITS
+                   This can be the value `32` or `64` to specify the architecture
+                   when it is not "obvious" to the configuration. It should generally
+                   not be necessary to specify this environment variable.
+
     NM
                    The name of the nm executable to use.
 
@@ -1423,12 +1453,8 @@ over the build process.  Typically these should be defined prior to running
                    Only needed if builing should use a different Perl executable
                    than what is used to run the Configure script.
 
-    HASHBANGPERL
-                   The command string for the Perl executable to insert in the
-                   #! line of perl scripts that will be publicly installed.
-                   Default: /usr/bin/env perl
-                   Note: the value of this variable is added to the same scripts
-                   on all platforms, but it's only relevant on Unix-like platforms.
+    RANLIB
+                   The name of the ranlib executable to use.
 
     RC
                    The name of the rc executable to use. The default will be as
@@ -1436,9 +1462,6 @@ over the build process.  Typically these should be defined prior to running
                    defined then "windres" will be used. The WINDRES environment
                    variable is synonymous to this. If both are defined then RC
                    takes precedence.
-
-    RANLIB
-                   The name of the ranlib executable to use.
 
     WINDRES
                    See RC.
@@ -1583,7 +1606,7 @@ working incorrectly. If you think you encountered a bug, please
 Along with a short description of the bug, please provide the complete
 configure command line and the relevant output including the error message.
 
-Note: To make the output readable, pleace add a 'code fence' (three backquotes
+Note: To make the output readable, please add a 'code fence' (three backquotes
 ` ``` ` on a separate line) before and after your output:
 
      ```

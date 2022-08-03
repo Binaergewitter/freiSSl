@@ -27,6 +27,7 @@ void tls_engine_finish(ENGINE *e)
 
 const EVP_CIPHER *tls_get_cipher_from_engine(int nid)
 {
+    const EVP_CIPHER *ret = NULL;
 #ifndef OPENSSL_NO_ENGINE
     ENGINE *eng;
 
@@ -36,15 +37,16 @@ const EVP_CIPHER *tls_get_cipher_from_engine(int nid)
      */
     eng = ENGINE_get_cipher_engine(nid);
     if (eng != NULL) {
+        ret = ENGINE_get_cipher(eng, nid);
         ENGINE_finish(eng);
-        return EVP_get_cipherbynid(nid);
     }
 #endif
-    return NULL;
+    return ret;
 }
 
 const EVP_MD *tls_get_digest_from_engine(int nid)
 {
+    const EVP_MD *ret = NULL;
 #ifndef OPENSSL_NO_ENGINE
     ENGINE *eng;
 
@@ -54,18 +56,22 @@ const EVP_MD *tls_get_digest_from_engine(int nid)
      */
     eng = ENGINE_get_digest_engine(nid);
     if (eng != NULL) {
+        ret = ENGINE_get_digest(eng, nid);
         ENGINE_finish(eng);
-        return EVP_get_digestbynid(nid);
     }
 #endif
-    return NULL;
+    return ret;
 }
 
 #ifndef OPENSSL_NO_ENGINE
-int tls_engine_load_ssl_client_cert(SSL *s, X509 **px509, EVP_PKEY **ppkey)
+int tls_engine_load_ssl_client_cert(SSL_CONNECTION *s, X509 **px509,
+                                    EVP_PKEY **ppkey)
 {
-    return ENGINE_load_ssl_client_cert(s->ctx->client_cert_engine, s,
-                                       SSL_get_client_CA_list(s),
+    SSL *ssl = SSL_CONNECTION_GET_SSL(s);
+
+    return ENGINE_load_ssl_client_cert(SSL_CONNECTION_GET_CTX(s)->client_cert_engine,
+                                       ssl,
+                                       SSL_get_client_CA_list(ssl),
                                        px509, ppkey, NULL, NULL, NULL);
 }
 #endif

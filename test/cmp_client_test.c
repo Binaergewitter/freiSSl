@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2007-2022 The OpenSSL Project Authors. All Rights Reserved.
  * Copyright Nokia 2007-2019
  * Copyright Siemens AG 2015-2019
  *
@@ -11,9 +11,7 @@
 
 #include "helpers/cmp_testlib.h"
 
-#include "apps/cmp_mock_srv.h"
-
-#ifndef NDEBUG /* tests need mock server, which is available only if !NDEBUG */
+#include "cmp_mock_srv.h"
 
 static const char *server_key_f;
 static const char *server_cert_f;
@@ -64,6 +62,7 @@ static CMP_SES_TEST_FIXTURE *set_up(const char *const test_case_name)
     fixture->test_case_name = test_case_name;
     if (!TEST_ptr(fixture->srv_ctx = ossl_cmp_mock_srv_new(libctx, NULL))
             || !OSSL_CMP_SRV_CTX_set_accept_unprotected(fixture->srv_ctx, 1)
+            || !ossl_cmp_mock_srv_set1_refCert(fixture->srv_ctx, client_cert)
             || !ossl_cmp_mock_srv_set1_certOut(fixture->srv_ctx, client_cert)
             || (srv_cmp_ctx =
                 OSSL_CMP_SRV_CTX_get0_cmp_ctx(fixture->srv_ctx)) == NULL
@@ -101,7 +100,6 @@ static int execute_exec_GENM_ses_test(CMP_SES_TEST_FIXTURE *fixture)
     if (!TEST_ptr(itavs = OSSL_CMP_exec_GENM_ses(fixture->cmp_ctx)))
         return 0;
     sk_OSSL_CMP_ITAV_pop_free(itavs, OSSL_CMP_ITAV_free);
-    /* TODO: check if the returned value is the expected one (same as sent) */
     return 1;
 }
 
@@ -115,12 +113,11 @@ static int execute_exec_certrequest_ses_test(CMP_SES_TEST_FIXTURE *fixture)
 
     if (!TEST_ptr(res) || !TEST_int_eq(X509_cmp(res, client_cert), 0))
         return 0;
-    /* TODO: check that cerfConf has been exchanged unless implicitConfirm */
     if (fixture->caPubs != NULL) {
         STACK_OF(X509) *caPubs = OSSL_CMP_CTX_get1_caPubs(fixture->cmp_ctx);
         int ret = TEST_int_eq(STACK_OF_X509_cmp(fixture->caPubs, caPubs), 0);
 
-        sk_X509_pop_free(caPubs, X509_free);
+        OSSL_STACK_OF_X509_free(caPubs);
         return ret;
     }
     return 1;
@@ -169,7 +166,6 @@ static int test_exec_IR_ses_poll(void)
     ossl_cmp_mock_srv_set_pollCount(fixture->srv_ctx, 2);
     ossl_cmp_mock_srv_set_checkAfterTime(fixture->srv_ctx, checkAfter);
     EXECUTE_TEST(execute_exec_certrequest_ses_test, tear_down);
-    /* TODO: check that 2 rounds are done or session takes 2..3 seconds */
     return result;
 }
 
@@ -226,7 +222,7 @@ static int test_exec_P10CR_ses(void)
     SETUP_TEST_FIXTURE(CMP_SES_TEST_FIXTURE, set_up);
     fixture->req_type = OSSL_CMP_P10CR;
     fixture->expected = 1;
-    if (!TEST_ptr(req = load_csr_der(pkcs10_f))
+    if (!TEST_ptr(req = load_csr_der(pkcs10_f, libctx))
             || !TEST_true(OSSL_CMP_CTX_set1_p10CSR(fixture->cmp_ctx, req))) {
         tear_down(fixture);
         fixture = NULL;
@@ -347,7 +343,7 @@ void cleanup_tests(void)
     return;
 }
 
-# define USAGE "server.key server.crt client.key client.crt client.csr module_name [module_conf_file]\n"
+#define USAGE "server.key server.crt client.key client.crt client.csr module_name [module_conf_file]\n"
 OPT_TEST_DECLARE_USAGE(USAGE)
 
 int setup_tests(void)
@@ -373,7 +369,7 @@ int setup_tests(void)
             || !TEST_ptr(server_cert = load_cert_pem(server_cert_f, libctx))
             || !TEST_ptr(client_key = load_pkey_pem(client_key_f, libctx))
             || !TEST_ptr(client_cert = load_cert_pem(client_cert_f, libctx))
-            || !TEST_int_eq(1, RAND_bytes_ex(libctx, ref, sizeof(ref)))) {
+            || !TEST_int_eq(1, RAND_bytes_ex(libctx, ref, sizeof(ref), 0))) {
         cleanup_tests();
         return 0;
     }
@@ -394,13 +390,3 @@ int setup_tests(void)
     ADD_TEST(test_exchange_error);
     return 1;
 }
-
-#else /* !defined (NDEBUG) */
-
-int setup_tests(void)
-{
-    TEST_note("CMP session tests are disabled in this build (NDEBUG).");
-    return 1;
-}
-
-#endif

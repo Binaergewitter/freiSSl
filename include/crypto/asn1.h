@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2015-2022 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -12,6 +12,7 @@
 # pragma once
 
 # include <openssl/asn1.h>
+# include <openssl/core_dispatch.h> /* OSSL_FUNC_keymgmt_import() */
 
 /* Internal ASN1 structures and functions: not for application use */
 
@@ -73,15 +74,11 @@ struct evp_pkey_asn1_method_st {
     int (*get_priv_key) (const EVP_PKEY *pk, unsigned char *priv, size_t *len);
     int (*get_pub_key) (const EVP_PKEY *pk, unsigned char *pub, size_t *len);
 
-    /*
-     * TODO: Make sure these functions are defined for key types that are
-     * implemented in providers.
-     */
     /* Exports and imports to / from providers */
     size_t (*dirty_cnt) (const EVP_PKEY *pk);
     int (*export_to) (const EVP_PKEY *pk, void *to_keydata,
-                      EVP_KEYMGMT *to_keymgmt, OSSL_LIB_CTX *libctx,
-                      const char *propq);
+                      OSSL_FUNC_keymgmt_import_fn *importer,
+                      OSSL_LIB_CTX *libctx, const char *propq);
     OSSL_CALLBACK *import_from;
     int (*copy) (EVP_PKEY *to, EVP_PKEY *from);
 
@@ -143,6 +140,14 @@ int ossl_x509_algor_new_from_md(X509_ALGOR **palg, const EVP_MD *md);
 const EVP_MD *ossl_x509_algor_get_md(X509_ALGOR *alg);
 X509_ALGOR *ossl_x509_algor_mgf1_decode(X509_ALGOR *alg);
 int ossl_x509_algor_md_to_mgf1(X509_ALGOR **palg, const EVP_MD *mgf1md);
-int ossl_asn1_time_print_ex(BIO *bp, const ASN1_TIME *tm);
+int ossl_asn1_time_print_ex(BIO *bp, const ASN1_TIME *tm, unsigned long flags);
+
+EVP_PKEY * ossl_d2i_PrivateKey_legacy(int keytype, EVP_PKEY **a,
+                                      const unsigned char **pp, long length,
+                                      OSSL_LIB_CTX *libctx, const char *propq);
+X509_ALGOR *ossl_X509_ALGOR_from_nid(int nid, int ptype, void *pval);
+
+time_t ossl_asn1_string_to_time_t(const char *asn1_string);
+void ossl_asn1_string_set_bits_left(ASN1_STRING *str, unsigned int num);
 
 #endif /* ndef OSSL_CRYPTO_ASN1_H */

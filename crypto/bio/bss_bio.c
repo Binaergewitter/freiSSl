@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1999-2022 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -15,7 +15,7 @@
  * See ssl/ssltest.c for some hints on how this can be used.
  */
 
-#include "e_os.h"
+#include "internal/e_os.h"
 #include <assert.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -38,10 +38,8 @@ static void bio_destroy_pair(BIO *bio);
 static const BIO_METHOD methods_biop = {
     BIO_TYPE_BIO,
     "BIO pair",
-    /* TODO: Convert to new style write function */
     bwrite_conv,
     bio_write,
-    /* TODO: Convert to new style read function */
     bread_conv,
     bio_read,
     bio_puts,
@@ -275,7 +273,7 @@ static int bio_write(BIO *bio, const char *buf, int num_)
 
     BIO_clear_retry_flags(bio);
 
-    if (!bio->init || buf == NULL || num == 0)
+    if (!bio->init || buf == NULL || num_ <= 0)
         return 0;
 
     b = bio->ptr;

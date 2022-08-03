@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1999-2022 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -470,14 +470,22 @@ static const char _asn1_mon[12][4] = {
     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
 };
 
-/* returns 1 on success, 0 on BIO write error or parse failure */
+/* prints the time with the default date format (RFC 822) */
 int ASN1_TIME_print(BIO *bp, const ASN1_TIME *tm)
 {
-    return ossl_asn1_time_print_ex(bp, tm) > 0;
+    return ASN1_TIME_print_ex(bp, tm, ASN1_DTFLGS_RFC822);
 }
 
+/* returns 1 on success, 0 on BIO write error or parse failure */
+int ASN1_TIME_print_ex(BIO *bp, const ASN1_TIME *tm, unsigned long flags)
+{
+    return ossl_asn1_time_print_ex(bp, tm, flags) > 0;
+}
+
+
+/* prints the time with the date format of ISO 8601 */
 /* returns 0 on BIO write error, else -1 in case of parse failure, else 1 */
-int ossl_asn1_time_print_ex(BIO *bp, const ASN1_TIME *tm)
+int ossl_asn1_time_print_ex(BIO *bp, const ASN1_TIME *tm, unsigned long flags)
 {
     char *v;
     int gmt = 0, l;
@@ -508,15 +516,33 @@ int ossl_asn1_time_print_ex(BIO *bp, const ASN1_TIME *tm)
                 ++f_len;
         }
 
-        return BIO_printf(bp, "%s %2d %02d:%02d:%02d%.*s %d%s",
+        if ((flags & ASN1_DTFLGS_TYPE_MASK) == ASN1_DTFLGS_ISO8601) {
+            return BIO_printf(bp, "%4d-%02d-%02d %02d:%02d:%02d%.*s%s",
+                          stm.tm_year + 1900, stm.tm_mon + 1,
+                          stm.tm_mday, stm.tm_hour,
+                          stm.tm_min, stm.tm_sec, f_len, f,
+                          (gmt ? "Z" : "")) > 0;
+        }
+        else {
+            return BIO_printf(bp, "%s %2d %02d:%02d:%02d%.*s %d%s",
                           _asn1_mon[stm.tm_mon], stm.tm_mday, stm.tm_hour,
                           stm.tm_min, stm.tm_sec, f_len, f, stm.tm_year + 1900,
                           (gmt ? " GMT" : "")) > 0;
+        }
     } else {
-        return BIO_printf(bp, "%s %2d %02d:%02d:%02d %d%s",
+        if ((flags & ASN1_DTFLGS_TYPE_MASK) == ASN1_DTFLGS_ISO8601) {
+            return BIO_printf(bp, "%4d-%02d-%02d %02d:%02d:%02d%s",
+                          stm.tm_year + 1900, stm.tm_mon + 1,
+                          stm.tm_mday, stm.tm_hour,
+                          stm.tm_min, stm.tm_sec,
+                          (gmt ? "Z" : "")) > 0;
+        }
+        else {
+            return BIO_printf(bp, "%s %2d %02d:%02d:%02d %d%s",
                           _asn1_mon[stm.tm_mon], stm.tm_mday, stm.tm_hour,
                           stm.tm_min, stm.tm_sec, stm.tm_year + 1900,
                           (gmt ? " GMT" : "")) > 0;
+        }
     }
 }
 
@@ -562,4 +588,56 @@ int ASN1_TIME_compare(const ASN1_TIME *a, const ASN1_TIME *b)
     if (day < 0 || sec < 0)
         return -1;
     return 0;
+}
+
+/*
+ * tweak for Windows
+ */
+#ifdef WIN32
+# define timezone _timezone
+#endif
+
+#ifdef __FreeBSD__
+# define USE_TIMEGM
+#endif
+
+time_t ossl_asn1_string_to_time_t(const char *asn1_string)
+{
+    ASN1_TIME *timestamp_asn1 = NULL;
+    struct tm *timestamp_tm = NULL;
+#ifndef USE_TIMEGM
+    time_t timestamp_local;
+#endif
+    time_t timestamp_utc;
+
+    timestamp_asn1 = ASN1_TIME_new();
+    if (!ASN1_TIME_set_string(timestamp_asn1, asn1_string))
+    {
+        ASN1_TIME_free(timestamp_asn1);
+        return -1;
+    }
+
+    timestamp_tm = OPENSSL_malloc(sizeof(*timestamp_tm));
+    if (timestamp_tm == NULL) {
+        ASN1_TIME_free(timestamp_asn1);
+        return -1;
+    }
+    if (!(ASN1_TIME_to_tm(timestamp_asn1, timestamp_tm))) {
+        OPENSSL_free(timestamp_tm);
+        ASN1_TIME_free(timestamp_asn1);
+        return -1;
+    }
+
+#ifdef USE_TIMEGM
+    timestamp_utc = timegm(timestamp_tm);
+    OPENSSL_free(timestamp_tm);
+#else
+    timestamp_local = mktime(timestamp_tm);
+    OPENSSL_free(timestamp_tm);
+
+    timestamp_utc = timestamp_local - timezone;
+#endif
+
+    ASN1_TIME_free(timestamp_asn1);
+    return timestamp_utc;
 }

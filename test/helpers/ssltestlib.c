@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2016-2022 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -10,10 +10,9 @@
 #include <string.h>
 
 #include "internal/nelem.h"
-#include "internal/cryptlib.h" /* for ossl_sleep() */
 #include "ssltestlib.h"
 #include "../testutil.h"
-#include "e_os.h"
+#include "internal/e_os.h" /* for ossl_sleep() etc. */
 
 #ifdef OPENSSL_SYS_UNIX
 # include <unistd.h>
@@ -50,7 +49,7 @@ const BIO_METHOD *bio_f_tls_dump_filter(void)
     if (method_tls_dump == NULL) {
         method_tls_dump = BIO_meth_new(BIO_TYPE_TLS_DUMP_FILTER,
                                         "TLS dump filter");
-        if (   method_tls_dump == NULL
+        if (method_tls_dump == NULL
             || !BIO_meth_set_write(method_tls_dump, tls_dump_write)
             || !BIO_meth_set_read(method_tls_dump, tls_dump_read)
             || !BIO_meth_set_puts(method_tls_dump, tls_dump_puts)
@@ -407,8 +406,124 @@ static int mempacket_test_read(BIO *bio, char *out, int outl)
     }
 
     memcpy(out, thispkt->data, outl);
+
     mempacket_free(thispkt);
     return outl;
+}
+
+/*
+ * Look for records from different epochs and swap them around
+ */
+int mempacket_swap_epoch(BIO *bio)
+{
+    MEMPACKET_TEST_CTX *ctx = BIO_get_data(bio);
+    MEMPACKET *thispkt;
+    int rem, len, prevlen = 0, pktnum;
+    unsigned char *rec, *prevrec = NULL, *tmp;
+    unsigned int epoch;
+    int numpkts = sk_MEMPACKET_num(ctx->pkts);
+
+    if (numpkts <= 0)
+        return 0;
+
+    /*
+     * If there are multiple packets we only look in the last one. This should
+     * always be the one where any epoch change occurs.
+     */
+    thispkt = sk_MEMPACKET_value(ctx->pkts, numpkts - 1);
+    if (thispkt == NULL)
+        return 0;
+
+    for (rem = thispkt->len, rec = thispkt->data; rem > 0; rem -= len, rec += len) {
+        if (rem < DTLS1_RT_HEADER_LENGTH)
+            return 0;
+        epoch = (rec[EPOCH_HI] << 8) | rec[EPOCH_LO];
+        len = ((rec[RECORD_LEN_HI] << 8) | rec[RECORD_LEN_LO])
+                + DTLS1_RT_HEADER_LENGTH;
+        if (rem < len)
+            return 0;
+
+        /* Assumes the epoch change does not happen on the first record */
+        if (epoch != ctx->epoch) {
+            if (prevrec == NULL)
+                return 0;
+
+            /*
+             * We found 2 records with different epochs. Take a copy of the
+             * earlier record
+             */
+            tmp = OPENSSL_malloc(prevlen);
+            if (tmp == NULL)
+                return 0;
+
+            memcpy(tmp, prevrec, prevlen);
+            /*
+             * Move everything from this record onwards, including any trailing
+             * records, and overwrite the earlier record
+             */
+            memmove(prevrec, rec, rem);
+            thispkt->len -= prevlen;
+            pktnum = thispkt->num;
+
+            /*
+             * Create a new packet for the earlier record that we took out and
+             * add it to the end of the packet list.
+             */
+            thispkt = OPENSSL_malloc(sizeof(*thispkt));
+            if (thispkt == NULL) {
+                OPENSSL_free(tmp);
+                return 0;
+            }
+            thispkt->type = INJECT_PACKET;
+            thispkt->data = tmp;
+            thispkt->len = prevlen;
+            thispkt->num = pktnum + 1;
+            if (sk_MEMPACKET_insert(ctx->pkts, thispkt, numpkts) <= 0) {
+                OPENSSL_free(tmp);
+                OPENSSL_free(thispkt);
+                return 0;
+            }
+
+            return 1;
+        }
+        prevrec = rec;
+        prevlen = len;
+    }
+
+    return 0;
+}
+
+/* Take the last and penultimate packets and swap them around */
+int mempacket_swap_recent(BIO *bio)
+{
+    MEMPACKET_TEST_CTX *ctx = BIO_get_data(bio);
+    MEMPACKET *thispkt;
+    int numpkts = sk_MEMPACKET_num(ctx->pkts);
+
+    /* We need at least 2 packets to be able to swap them */
+    if (numpkts <= 1)
+        return 0;
+
+    /* Get the penultimate packet */
+    thispkt = sk_MEMPACKET_value(ctx->pkts, numpkts - 2);
+    if (thispkt == NULL)
+        return 0;
+
+    if (sk_MEMPACKET_delete(ctx->pkts, numpkts - 2) != thispkt)
+        return 0;
+
+    /* Re-add it to the end of the list */
+    thispkt->num++;
+    if (sk_MEMPACKET_insert(ctx->pkts, thispkt, numpkts - 1) <= 0)
+        return 0;
+
+    /* We also have to adjust the packet number of the other packet */
+    thispkt = sk_MEMPACKET_value(ctx->pkts, numpkts - 2);
+    if (thispkt == NULL)
+        return 0;
+    thispkt->num--;
+
+    return 1;
 }
 
 int mempacket_test_inject(BIO *bio, const char *in, int inl, int pktnum,
@@ -470,7 +585,7 @@ int mempacket_test_inject(BIO *bio, const char *in, int inl, int pktnum,
         thispkt->type = type;
     }
 
-    for(i = 0; (looppkt = sk_MEMPACKET_value(ctx->pkts, i)) != NULL; i++) {
+    for (i = 0; (looppkt = sk_MEMPACKET_value(ctx->pkts, i)) != NULL; i++) {
         /* Check if we found the right place to insert this packet */
         if (looppkt->num > thispkt->num) {
             if (sk_MEMPACKET_insert(ctx->pkts, thispkt, i) == 0)
@@ -695,7 +810,9 @@ int create_ssl_ctx_pair(OSSL_LIB_CTX *libctx, const SSL_METHOD *sm,
     if (sctx != NULL) {
         if (*sctx != NULL)
             serverctx = *sctx;
-        else if (!TEST_ptr(serverctx = SSL_CTX_new_ex(libctx, NULL, sm)))
+        else if (!TEST_ptr(serverctx = SSL_CTX_new_ex(libctx, NULL, sm))
+            || !TEST_true(SSL_CTX_set_options(serverctx,
+                                              SSL_OP_ALLOW_CLIENT_RENEGOTIATION)))
             goto err;
     }
 
@@ -766,23 +883,20 @@ static int set_nb(int fd)
 {
     int flags;
 
-    flags = fcntl(fd,F_GETFL,0);
+    flags = fcntl(fd, F_GETFL, 0);
     if (flags == -1)
         return flags;
     flags = fcntl(fd, F_SETFL, flags | O_NONBLOCK);
     return flags;
 }
 
-int create_test_sockets(int *cfd, int *sfd)
+int create_test_sockets(int *cfdp, int *sfdp)
 {
     struct sockaddr_in sin;
     const char *host = "127.0.0.1";
     int cfd_connected = 0, ret = 0;
     socklen_t slen = sizeof(sin);
-    int afd = -1;
-
-    *cfd = -1;
-    *sfd = -1;
+    int afd = -1, cfd = -1, sfd = -1;
 
     memset ((char *) &sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;
@@ -801,37 +915,39 @@ int create_test_sockets(int *cfd, int *sfd)
     if (listen(afd, 1) < 0)
         goto out;
 
-    *cfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (*cfd < 0)
+    cfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (cfd < 0)
         goto out;
 
     if (set_nb(afd) == -1)
         goto out;
 
-    while (*sfd == -1 || !cfd_connected ) {
-        *sfd = accept(afd, NULL, 0);
-        if (*sfd == -1 && errno != EAGAIN)
+    while (sfd == -1 || !cfd_connected) {
+        sfd = accept(afd, NULL, 0);
+        if (sfd == -1 && errno != EAGAIN)
             goto out;
 
-        if (!cfd_connected && connect(*cfd, (struct sockaddr*)&sin, sizeof(sin)) < 0)
+        if (!cfd_connected && connect(cfd, (struct sockaddr*)&sin, sizeof(sin)) < 0)
             goto out;
         else
             cfd_connected = 1;
     }
 
-    if (set_nb(*cfd) == -1 || set_nb(*sfd) == -1)
+    if (set_nb(cfd) == -1 || set_nb(sfd) == -1)
         goto out;
     ret = 1;
+    *cfdp = cfd;
+    *sfdp = sfd;
     goto success;
 
 out:
-        if (*cfd != -1)
-            close(*cfd);
-        if (*sfd != -1)
-            close(*sfd);
+    if (cfd != -1)
+        close(cfd);
+    if (sfd != -1)
+        close(sfd);
 success:
-        if (afd != -1)
-            close(afd);
+    if (afd != -1)
+        close(afd);
     return ret;
 }
 

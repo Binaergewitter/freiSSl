@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2022 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -26,6 +26,13 @@ static OSSL_PARAM digest_check[] = {
     { NULL, 0, NULL, 0, 0 }
 };
 
+static unsigned int stopsuccess = 0;
+static OSSL_PARAM stop_property_mirror[] = {
+    { "stop-property-mirror", OSSL_PARAM_UNSIGNED_INTEGER, &stopsuccess,
+      sizeof(stopsuccess) },
+    { NULL, 0, NULL, 0, 0 }
+};
+
 static int test_provider(OSSL_LIB_CTX **libctx, const char *name,
                          OSSL_PROVIDER *legacy)
 {
@@ -41,18 +48,44 @@ static int test_provider(OSSL_LIB_CTX **libctx, const char *name,
                  "Hello OpenSSL %.20s, greetings from %s!",
                  OPENSSL_VERSION_STR, name);
 
+
     /*
-        * Check that it is possible to have a built-in provider mirrored in
-        * a child lib ctx.
-        */
+     * We set properties that we know the providers we are using don't have.
+     * This should mean that the p_test provider will fail any fetches - which
+     * is something we test inside the provider.
+     */
+    EVP_set_default_properties(*libctx, "fips=yes");
+    /*
+     * Check that it is possible to have a built-in provider mirrored in
+     * a child lib ctx.
+     */
     if (!TEST_ptr(base = OSSL_PROVIDER_load(*libctx, "base")))
         goto err;
     if (!TEST_ptr(prov = OSSL_PROVIDER_load(*libctx, name)))
         goto err;
+
+    /*
+     * Once the provider is loaded we clear the default properties and fetches
+     * should start working again.
+     */
+    EVP_set_default_properties(*libctx, "");
     if (dolegacycheck) {
         if (!TEST_true(OSSL_PROVIDER_get_params(prov, digest_check))
                 || !TEST_true(digestsuccess))
             goto err;
+
+        /*
+         * Check that a provider can prevent property mirroring if it sets its
+         * own properties explicitly
+         */
+        if (!TEST_true(OSSL_PROVIDER_get_params(prov, stop_property_mirror))
+                || !TEST_true(stopsuccess))
+            goto err;
+        EVP_set_default_properties(*libctx, "fips=yes");
+        if (!TEST_true(OSSL_PROVIDER_get_params(prov, digest_check))
+                || !TEST_true(digestsuccess))
+            goto err;
+        EVP_set_default_properties(*libctx, "");
     }
     if (!TEST_true(OSSL_PROVIDER_get_params(prov, greeting_request))
             || !TEST_ptr(greeting = greeting_request[0].data)
@@ -158,12 +191,15 @@ static int test_builtin_provider_with_child(void)
          * In this case we assume we've been built with "no-legacy" and skip
          * this test (there is no OPENSSL_NO_LEGACY)
          */
+        OSSL_LIB_CTX_free(libctx);
         return 1;
     }
 
     if (!TEST_true(OSSL_PROVIDER_add_builtin(libctx, name,
-                                             PROVIDER_INIT_FUNCTION_NAME)))
+                                             PROVIDER_INIT_FUNCTION_NAME))) {
+        OSSL_LIB_CTX_free(libctx);
         return 0;
+    }
 
     /* test_provider will free libctx and unload legacy as part of the test */
     return test_provider(&libctx, name, legacy);

@@ -1,5 +1,5 @@
 /*
- * Copyright 2001-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2001-2022 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -46,7 +46,7 @@ static int cipher_hw_aes_initkey(PROV_CIPHER_CTX *dat,
         if (BSAES_CAPABLE && dat->mode == EVP_CIPH_CBC_MODE) {
             ret = AES_set_decrypt_key(key, keylen * 8, ks);
             dat->block = (block128_f)AES_decrypt;
-            dat->stream.cbc = (cbc128_f)bsaes_cbc_encrypt;
+            dat->stream.cbc = (cbc128_f)ossl_bsaes_cbc_encrypt;
         } else
 #endif
 #ifdef VPAES_CAPABLE
@@ -91,7 +91,7 @@ static int cipher_hw_aes_initkey(PROV_CIPHER_CTX *dat,
     if (BSAES_CAPABLE && dat->mode == EVP_CIPH_CTR_MODE) {
         ret = AES_set_encrypt_key(key, keylen * 8, ks);
         dat->block = (block128_f)AES_encrypt;
-        dat->stream.ctr = (ctr128_f)bsaes_ctr32_encrypt_blocks;
+        dat->stream.ctr = (ctr128_f)ossl_bsaes_ctr32_encrypt_blocks;
     } else
 #endif
 #ifdef VPAES_CAPABLE
@@ -142,6 +142,8 @@ const PROV_CIPHER_HW *ossl_prov_cipher_hw_aes_##mode(size_t keybits)           \
 # include "cipher_aes_hw_t4.inc"
 #elif defined(S390X_aes_128_CAPABLE)
 # include "cipher_aes_hw_s390x.inc"
+#elif defined(RV64I_ZKND_ZKNE_CAPABLE)
+# include "cipher_aes_hw_rv64i_zknd_zkne.inc"
 #else
 /* The generic case */
 # define PROV_CIPHER_HW_declare(mode)

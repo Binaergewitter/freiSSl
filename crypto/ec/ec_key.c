@@ -19,7 +19,9 @@
 #include "ec_local.h"
 #include "internal/refcount.h"
 #include <openssl/err.h>
-#include <openssl/engine.h>
+#ifndef FIPS_MODULE
+# include <openssl/engine.h>
+#endif
 #include <openssl/self_test.h>
 #include "prov/providercommon.h"
 #include "crypto/bn.h"
@@ -298,7 +300,7 @@ static int ec_generate_key(EC_KEY *eckey, int pairwise_test)
     }
 
     do
-        if (!BN_priv_rand_range_ex(priv_key, order, ctx))
+        if (!BN_priv_rand_range_ex(priv_key, order, 0, ctx))
             goto err;
     while (BN_is_zero(priv_key)) ;
 
@@ -945,8 +947,7 @@ int ossl_ec_key_simple_oct2priv(EC_KEY *eckey, const unsigned char *buf,
         ERR_raise(ERR_LIB_EC, ERR_R_MALLOC_FAILURE);
         return 0;
     }
-    eckey->priv_key = BN_bin2bn(buf, len, eckey->priv_key);
-    if (eckey->priv_key == NULL) {
+    if (BN_bin2bn(buf, len, eckey->priv_key) == NULL) {
         ERR_raise(ERR_LIB_EC, ERR_R_BN_LIB);
         return 0;
     }

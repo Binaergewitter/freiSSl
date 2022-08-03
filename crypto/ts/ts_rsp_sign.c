@@ -1,5 +1,5 @@
 /*
- * Copyright 2006-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2006-2022 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -7,7 +7,7 @@
  * https://www.openssl.org/source/license.html
  */
 
-#include "e_os.h"
+#include "internal/e_os.h"
 
 #include <openssl/objects.h>
 #include <openssl/ts.h>
@@ -147,7 +147,7 @@ void TS_RESP_CTX_free(TS_RESP_CTX *ctx)
     OPENSSL_free(ctx->propq);
     X509_free(ctx->signer_cert);
     EVP_PKEY_free(ctx->signer_key);
-    sk_X509_pop_free(ctx->certs, X509_free);
+    OSSL_STACK_OF_X509_free(ctx->certs);
     sk_ASN1_OBJECT_pop_free(ctx->policies, ASN1_OBJECT_free);
     ASN1_OBJECT_free(ctx->default_policy);
     sk_EVP_MD_free(ctx->mds);   /* No EVP_MD_free method exists. */
@@ -197,7 +197,7 @@ int TS_RESP_CTX_set_def_policy(TS_RESP_CTX *ctx, const ASN1_OBJECT *def_policy)
 
 int TS_RESP_CTX_set_certs(TS_RESP_CTX *ctx, STACK_OF(X509) *certs)
 {
-    sk_X509_pop_free(ctx->certs, X509_free);
+    OSSL_STACK_OF_X509_free(ctx->certs);
     ctx->certs = NULL;
 
     return certs == NULL || (ctx->certs = X509_chain_up_ref(certs)) != NULL;
@@ -484,7 +484,7 @@ static int ts_RESP_check_request(TS_RESP_CTX *ctx)
         return 0;
     }
     digest = msg_imprint->hashed_msg;
-    if (digest->length != EVP_MD_size(md)) {
+    if (digest->length != EVP_MD_get_size(md)) {
         TS_RESP_CTX_set_status_info(ctx, TS_STATUS_REJECTION,
                                     "Bad message digest.");
         TS_RESP_CTX_add_failure_info(ctx, TS_INFO_BAD_DATA_FORMAT);
@@ -711,8 +711,8 @@ static int ts_RESP_sign(TS_RESP_CTX *ctx)
 
     if (ctx->signer_md == NULL)
         signer_md = EVP_MD_fetch(ctx->libctx, "SHA256", ctx->propq);
-    else if (EVP_MD_provider(ctx->signer_md) == NULL)
-        signer_md = EVP_MD_fetch(ctx->libctx, EVP_MD_name(ctx->signer_md),
+    else if (EVP_MD_get0_provider(ctx->signer_md) == NULL)
+        signer_md = EVP_MD_fetch(ctx->libctx, EVP_MD_get0_name(ctx->signer_md),
                                  ctx->propq);
     else
         signer_md = (EVP_MD *)ctx->signer_md;

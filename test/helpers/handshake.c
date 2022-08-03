@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2021 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2016-2022 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -174,7 +174,7 @@ static int client_hello_select_server_ctx(SSL *s, void *arg, int ignore)
     remaining = len;
     servername = (const char *)p;
 
-    if (len == strlen("server2") && strncmp(servername, "server2", len) == 0) {
+    if (len == strlen("server2") && HAS_PREFIX(servername, "server2")) {
         SSL_CTX *new_ctx = arg;
         SSL_set_SSL_CTX(s, new_ctx);
         /*
@@ -188,7 +188,7 @@ static int client_hello_select_server_ctx(SSL *s, void *arg, int ignore)
         ex_data->servername = SSL_TEST_SERVERNAME_SERVER2;
         return 1;
     } else if (len == strlen("server1") &&
-               strncmp(servername, "server1", len) == 0) {
+               HAS_PREFIX(servername, "server1")) {
         ex_data->servername = SSL_TEST_SERVERNAME_SERVER1;
         return 1;
     } else if (ignore) {
@@ -278,8 +278,10 @@ static int server_ocsp_cb(SSL *s, void *arg)
      * For the purposes of testing we just send back a dummy OCSP response
      */
     *resp = *(unsigned char *)arg;
-    if (!SSL_set_tlsext_status_ocsp_resp(s, resp, 1))
+    if (!SSL_set_tlsext_status_ocsp_resp(s, resp, 1)) {
+        OPENSSL_free(resp);
         return SSL_TLSEXT_ERR_ALERT_FATAL;
+    }
 
     return SSL_TLSEXT_ERR_OK;
 }
@@ -303,10 +305,18 @@ static int verify_reject_cb(X509_STORE_CTX *ctx, void *arg) {
 
 static int n_retries = 0;
 static int verify_retry_cb(X509_STORE_CTX *ctx, void *arg) {
+    int idx = SSL_get_ex_data_X509_STORE_CTX_idx();
+    SSL *ssl;
+
+    /* this should not happen but check anyway */
+    if (idx < 0
+        || (ssl = X509_STORE_CTX_get_ex_data(ctx, idx)) == NULL)
+        return 0;
+
     if (--n_retries < 0)
         return 1;
-    X509_STORE_CTX_set_error(ctx, X509_V_ERR_APPLICATION_VERIFICATION);
-    return -1;
+
+    return SSL_set_retry_verify(ssl);
 }
 
 static int verify_accept_cb(X509_STORE_CTX *ctx, void *arg) {
@@ -631,6 +641,8 @@ static int configure_handshake_ctx(SSL_CTX *server_ctx, SSL_CTX *server2_ctx,
     if (extra->server.session_ticket_app_data != NULL) {
         server_ctx_data->session_ticket_app_data =
             OPENSSL_strdup(extra->server.session_ticket_app_data);
+        if (!TEST_ptr(server_ctx_data->session_ticket_app_data))
+            goto err;
         SSL_CTX_set_session_ticket_cb(server_ctx, generate_session_ticket_cb,
                                       decrypt_session_ticket_cb, server_ctx_data);
     }
@@ -639,6 +651,8 @@ static int configure_handshake_ctx(SSL_CTX *server_ctx, SSL_CTX *server2_ctx,
             goto err;
         server2_ctx_data->session_ticket_app_data =
             OPENSSL_strdup(extra->server2.session_ticket_app_data);
+        if (!TEST_ptr(server2_ctx_data->session_ticket_app_data))
+            goto err;
         SSL_CTX_set_session_ticket_cb(server2_ctx, NULL,
                                       decrypt_session_ticket_cb, server2_ctx_data);
     }
@@ -964,9 +978,15 @@ static void do_reneg_setup_step(const SSL_TEST_CTX *test_ctx, PEER *peer)
         return;
     } else if (test_ctx->handshake_mode == SSL_TEST_HANDSHAKE_POST_HANDSHAKE_AUTH) {
         if (SSL_is_server(peer->ssl)) {
+            SSL_CONNECTION *sc = SSL_CONNECTION_FROM_SSL_ONLY(peer->ssl);
+
+            if (sc == NULL) {
+                peer->status = PEER_ERROR;
+                return;
+            }
             /* Make the server believe it's received the extension */
             if (test_ctx->extra.server.force_pha)
-                peer->ssl->post_handshake_auth = SSL_PHA_EXT_RECEIVED;
+                sc->post_handshake_auth = SSL_PHA_EXT_RECEIVED;
             ret = SSL_verify_client_post_handshake(peer->ssl);
             if (!ret) {
                 peer->status = PEER_ERROR;
@@ -1196,13 +1216,7 @@ static handshake_status_t handshake_status(peer_status_t last_status,
             /* The client failed immediately before sending the ClientHello */
             return client_spoke_last ? CLIENT_ERROR : INTERNAL_ERROR;
         case PEER_SUCCESS:
-            /*
-             * First peer succeeded but second peer errored.
-             * TODO(emilia): we should be able to continue here (with some
-             * application data?) to ensure the first peer receives the
-             * alert / close_notify.
-             * (No tests currently exercise this branch.)
-             */
+            /* First peer succeeded but second peer errored. */
             return client_spoke_last ? CLIENT_ERROR : SERVER_ERROR;
         case PEER_RETRY:
             /* We errored; let the peer finish. */
@@ -1240,7 +1254,7 @@ static int pkey_type(EVP_PKEY *pkey)
             return NID_undef;
         return OBJ_txt2nid(name);
     }
-    return EVP_PKEY_id(pkey);
+    return EVP_PKEY_get_id(pkey);
 }
 
 static int peer_pkey_type(SSL *s)
@@ -1428,6 +1442,7 @@ static HANDSHAKE_RESULT *do_handshake_internal(
                                  test_ctx, extra, &server_ctx_data,
                                  &server2_ctx_data, &client_ctx_data)) {
         TEST_note("configure_handshake_ctx");
+        HANDSHAKE_RESULT_free(ret);
         return NULL;
     }
 
@@ -1524,7 +1539,7 @@ static HANDSHAKE_RESULT *do_handshake_internal(
      * The handshake succeeds once both peers have succeeded. If one peer
      * errors out, we also let the other peer retry (and presumably fail).
      */
-    for(;;) {
+    for (;;) {
         if (client_turn) {
             do_connect_step(test_ctx, &client, phase);
             status = handshake_status(client.status, server.status,
